@@ -545,6 +545,8 @@ class QTEGUI:
                 fg=self.SUCCESS
             )
             self.ai_frame.pack_forget()
+            self.cv_param_frame.pack(fill=tk.X)
+            self.cv_feature_frame.pack(fill=tk.X)
             self._log("切换到传统 CV 检测模式")
         else:
             self.detection_status_label.config(
@@ -552,6 +554,8 @@ class QTEGUI:
                 fg=self.WARNING
             )
             self.ai_frame.pack(fill=tk.X, pady=(5, 0))
+            self.cv_param_frame.pack_forget()
+            self.cv_feature_frame.pack_forget()
             self._log("切换到 AI 模型检测模式")
 
     def _update_ai_ante(self, value):
@@ -619,11 +623,14 @@ class QTEGUI:
         card.pack(fill=tk.X, pady=10)
         content = card.get_content_frame()
 
-        params = [
+        shared_params = [
             ("检测频率", "target_hz", "Hz", 120, 1000, 500,
              "屏幕检测循环频率，建议480Hz"),
             ("触发冷却", "cooldown_ms", "ms", 0, 200, 30,
              "每次触发后的锁定时间，防止连发"),
+        ]
+
+        cv_params = [
             ("预判补偿", "predict_ms", "ms", 0, 20, 0,
              "提前触发时间，补偿检测+按键延迟"),
             ("白色亮度", "white_v_low", "", 100, 255, 166,
@@ -635,7 +642,7 @@ class QTEGUI:
         self.param_vars = {}
         self.param_displays = {}
 
-        for label, attr, unit, min_v, max_v, default, tooltip in params:
+        for label, attr, unit, min_v, max_v, default, tooltip in shared_params:
             row = tk.Frame(content, bg=self.BG)
             row.pack(fill=tk.X, pady=4)
 
@@ -667,14 +674,50 @@ class QTEGUI:
                 widget.bind("<Enter>", lambda e, t=tooltip: self._show_tooltip(t))
                 widget.bind("<Leave>", lambda e: self._hide_tooltip())
 
+        self.cv_param_frame = tk.Frame(content, bg=self.BG)
+
+        for label, attr, unit, min_v, max_v, default, tooltip in cv_params:
+            row = tk.Frame(self.cv_param_frame, bg=self.BG)
+            row.pack(fill=tk.X, pady=4)
+
+            lbl = tk.Label(row, text=f"{label}:",
+                          bg=self.BG, fg="#aaa",
+                          font=("JetBrains Mono", 9),
+                          width=12, anchor="w")
+            lbl.pack(side=tk.LEFT)
+
+            var = tk.IntVar(value=default)
+            self.param_vars[attr] = var
+
+            scale = tk.Scale(row, from_=min_v, to=max_v,
+                           orient=tk.HORIZONTAL, variable=var,
+                           bg=self.BG, fg=self.FG,
+                           highlightthickness=0, length=140,
+                           showvalue=False,
+                           command=lambda v, a=attr: self._update_param(a, v))
+            scale.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+
+            val_lbl = tk.Label(row, text=f"{default}{unit}",
+                              bg=self.BG_SECONDARY, fg=self.SUCCESS,
+                              font=("JetBrains Mono", 9, "bold"),
+                              width=8)
+            val_lbl.pack(side=tk.LEFT)
+            self.param_displays[attr] = val_lbl
+
+            for widget in [lbl, scale, val_lbl]:
+                widget.bind("<Enter>", lambda e, t=tooltip: self._show_tooltip(t))
+                widget.bind("<Leave>", lambda e: self._hide_tooltip())
+
+        self.cv_param_frame.pack(fill=tk.X)
+
     def _build_feature_section(self, parent):
-        """Minimal feature toggles + red params + delay."""
         card = CollapsibleFrame(parent, title="🔬 高级设置", bg=self.BG, fg=self.FG)
         card.pack(fill=tk.X, pady=10)
         content = card.get_content_frame()
 
-        # Red detection params (collapsible-style compact)
-        red_frame = tk.LabelFrame(content, text="🔴 红色检测参数",
+        self.cv_feature_frame = tk.Frame(content, bg=self.BG)
+
+        red_frame = tk.LabelFrame(self.cv_feature_frame, text="🔴 红色检测参数",
                                  bg=self.BG, fg="#e74c3c",
                                  font=("JetBrains Mono", 9, "bold"),
                                  padx=8, pady=6)
@@ -728,8 +771,7 @@ class QTEGUI:
             val_lbl.pack(side=tk.LEFT)
             self.red_param_displays[attr] = val_lbl
 
-        # Delay compensation
-        delay_frame = tk.Frame(content, bg=self.BG)
+        delay_frame = tk.Frame(self.cv_feature_frame, bg=self.BG)
         delay_frame.pack(fill=tk.X, pady=(8, 0))
 
         tk.Label(delay_frame, text="延迟补偿:",
@@ -752,7 +794,7 @@ class QTEGUI:
                                      width=5)
         self.delay_display.pack(side=tk.LEFT)
 
-        mask_frame = tk.LabelFrame(content, text="⭕ 遮罩设置",
+        mask_frame = tk.LabelFrame(self.cv_feature_frame, text="⭕ 遮罩设置",
                                   bg=self.BG, fg="#9ad",
                                   font=("JetBrains Mono", 9, "bold"),
                                   padx=8, pady=6)
@@ -767,6 +809,8 @@ class QTEGUI:
         self.center_mask_display = self._build_mask_slider(
             mask_frame, "中心遮罩", self.center_mask_var, 0, 70, "%", self._update_center_mask
         )
+
+        self.cv_feature_frame.pack(fill=tk.X)
 
         save_frame = tk.Frame(content, bg=self.BG)
         save_frame.pack(fill=tk.X, pady=(10, 0))
