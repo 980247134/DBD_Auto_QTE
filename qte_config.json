@@ -1,0 +1,40 @@
+{
+  "version": "2.3",
+  "region": {
+    "left": 880,
+    "top": 460,
+    "width": 160,
+    "height": 160
+  },
+  "params": {
+    "target_hz": 120,
+    "cooldown_ms": 30,
+    "predict_ms": 0,
+    "white_v_low": 100,
+    "white_s_max": 10
+  },
+  "red_params": {
+    "red_min_r": 160,
+    "red_min_delta": 30,
+    "red_max_avg": 220,
+    "red_saturation": 0.5
+  },
+  "delay_degree": -3,
+  "capture": {
+    "backend": "obs",
+    "obs_camera_index": 1
+  },
+  "obs_enhance": {
+    "enabled": true,
+    "brightness": 15,
+    "contrast": 1.2
+  },
+  "input": {
+    "method": "pico2w",
+    "pico_usb_port": "COM6"
+  },
+  "mask": {
+    "outer_percent": 95,
+    "center_percent": 65
+  }
+}
