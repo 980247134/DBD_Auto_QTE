@@ -1,8 +1,9 @@
 """
-QTE Auto Tool - Main GUI Application (v2.3)
-Zero-config interface: auto speed detection handles everything.
+QTE Auto Tool - Main GUI Application (v2.4)
+Dual detection: traditional CV or AI model (ONNX), user-selectable.
 
 Key Design:
+- Detection method selector: traditional CV or AI model
 - No mode buttons, no Hyperfocus toggle: 480Hz auto-detects ALL speed changes
 - Red detection params exposed for fine-tuning
 - Clean, minimal UI for in-game use
@@ -22,6 +23,7 @@ from ctypes import wintypes
 
 from engine import QTEEngine
 from usb_sender import get_pico_usb_sender
+from ai_detector import AIDetector, is_onnxruntime_available
 from selector import RegionSelector
 from collapsible_frame import CollapsibleFrame
 
@@ -42,7 +44,7 @@ class QTEGUI:
 
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("QTE Auto Tool v2.3 - Zero Config")
+        self.root.title("QTE Auto Tool v2.4 - Dual Detection")
         self.root.geometry("1100x850")
         self.root.configure(bg=self.BG)
         self.root.minsize(950, 750)
@@ -85,6 +87,7 @@ class QTEGUI:
         self._build_region_section(left)
         self._build_capture_section(left)
         self._build_input_section(left)
+        self._build_detection_section(left)
         self._build_control_section(left)
         self._build_param_section(left)
         self._build_feature_section(left)
@@ -365,6 +368,222 @@ class QTEGUI:
                 font=("JetBrains Mono", 8),
                 justify=tk.LEFT).pack(pady=(5, 0))
 
+    def _build_detection_section(self, parent):
+        card = CollapsibleFrame(parent, title="🧠 识别方式", bg=self.BG, fg=self.FG)
+        card.pack(fill=tk.X, pady=(0, 10))
+        content = card.get_content_frame()
+
+        self.detection_status_label = tk.Label(content, text="当前: 传统 CV (像素阈值检测)",
+                                               bg=self.BG_SECONDARY, fg=self.SUCCESS,
+                                               font=("JetBrains Mono", 10, "bold"),
+                                               width=35, height=1)
+        self.detection_status_label.pack(fill=tk.X, pady=(0, 8))
+
+        method_row = tk.Frame(content, bg=self.BG)
+        method_row.pack(fill=tk.X, pady=5)
+
+        tk.Label(method_row, text="选择方式:",
+                bg=self.BG, fg="#aac",
+                font=("JetBrains Mono", 9, "bold"),
+                width=10, anchor="w").pack(side=tk.LEFT)
+
+        self.detection_method_var = tk.StringVar(value="cv")
+
+        self.btn_cv = tk.Radiobutton(method_row, text="传统 CV",
+                      variable=self.detection_method_var, value="cv",
+                      command=self._update_detection_method,
+                      bg=self.BG, fg=self.FG,
+                      selectcolor=self.BG_SECONDARY,
+                      activebackground=self.BG,
+                      activeforeground=self.SUCCESS,
+                      font=("JetBrains Mono", 10, "bold"),
+                      cursor="hand2")
+        self.btn_cv.pack(side=tk.LEFT, padx=8)
+
+        ai_ok = is_onnxruntime_available()
+        self.btn_ai = tk.Radiobutton(method_row, text="AI 模型",
+                      variable=self.detection_method_var, value="ai",
+                      command=self._update_detection_method,
+                      bg=self.BG, fg=self.FG if ai_ok else "#666",
+                      selectcolor=self.BG_SECONDARY,
+                      activebackground=self.BG,
+                      activeforeground=self.SUCCESS,
+                      font=("JetBrains Mono", 10, "bold"),
+                      cursor="hand2",
+                      state=tk.NORMAL if ai_ok else tk.DISABLED)
+        self.btn_ai.pack(side=tk.LEFT, padx=8)
+
+        self.ai_frame = tk.Frame(content, bg=self.BG)
+
+        model_row = tk.Frame(self.ai_frame, bg=self.BG)
+        model_row.pack(fill=tk.X, pady=3)
+
+        tk.Label(model_row, text="模型文件:",
+                bg=self.BG, fg="#aac",
+                font=("JetBrains Mono", 9),
+                width=10, anchor="w").pack(side=tk.LEFT)
+
+        self.ai_model_var = tk.StringVar(value="未选择")
+        self.ai_model_menu = tk.OptionMenu(model_row, self.ai_model_var, "未选择")
+        self.ai_model_menu.config(bg=self.BG_SECONDARY, fg=self.FG,
+                                  font=("JetBrains Mono", 9),
+                                  highlightthickness=0, width=16,
+                                  activebackground=self.BG,
+                                  activeforeground=self.SUCCESS)
+        self.ai_model_menu.pack(side=tk.LEFT, padx=5)
+
+        tk.Button(model_row, text="🔍",
+                 command=self._scan_models,
+                 bg=self.ACCENT, fg="white",
+                 font=("JetBrains Mono", 8, "bold"),
+                 width=3, cursor="hand2",
+                 relief=tk.FLAT, padx=3, pady=2).pack(side=tk.LEFT, padx=2)
+
+        device_row = tk.Frame(self.ai_frame, bg=self.BG)
+        device_row.pack(fill=tk.X, pady=3)
+
+        tk.Label(device_row, text="推理设备:",
+                bg=self.BG, fg="#aac",
+                font=("JetBrains Mono", 9),
+                width=10, anchor="w").pack(side=tk.LEFT)
+
+        self.ai_device_var = tk.StringVar(value="cpu")
+        tk.Radiobutton(device_row, text="CPU",
+                      variable=self.ai_device_var, value="cpu",
+                      bg=self.BG, fg=self.FG,
+                      selectcolor=self.BG_SECONDARY,
+                      font=("JetBrains Mono", 9),
+                      cursor="hand2").pack(side=tk.LEFT, padx=5)
+        tk.Radiobutton(device_row, text="GPU",
+                      variable=self.ai_device_var, value="gpu",
+                      bg=self.BG, fg=self.FG,
+                      selectcolor=self.BG_SECONDARY,
+                      font=("JetBrains Mono", 9),
+                      cursor="hand2").pack(side=tk.LEFT, padx=5)
+
+        ante_row = tk.Frame(self.ai_frame, bg=self.BG)
+        ante_row.pack(fill=tk.X, pady=3)
+
+        tk.Label(ante_row, text="预判延迟:",
+                bg=self.BG, fg="#aac",
+                font=("JetBrains Mono", 9),
+                width=10, anchor="w").pack(side=tk.LEFT)
+
+        self.ai_ante_var = tk.IntVar(value=20)
+        tk.Scale(ante_row, from_=0, to=50, resolution=5,
+                orient=tk.HORIZONTAL, variable=self.ai_ante_var,
+                bg=self.BG, fg=self.FG,
+                highlightthickness=0, length=100,
+                showvalue=False,
+                command=self._update_ai_ante).pack(side=tk.LEFT, padx=5)
+
+        self.ai_ante_display = tk.Label(ante_row, text="20ms",
+                                        bg=self.BG_SECONDARY, fg=self.WARNING,
+                                        font=("JetBrains Mono", 9, "bold"),
+                                        width=6)
+        self.ai_ante_display.pack(side=tk.LEFT)
+
+        threads_row = tk.Frame(self.ai_frame, bg=self.BG)
+        threads_row.pack(fill=tk.X, pady=3)
+
+        tk.Label(threads_row, text="CPU线程:",
+                bg=self.BG, fg="#aac",
+                font=("JetBrains Mono", 9),
+                width=10, anchor="w").pack(side=tk.LEFT)
+
+        self.ai_threads_var = tk.IntVar(value=4)
+        tk.Scale(threads_row, from_=1, to=8,
+                orient=tk.HORIZONTAL, variable=self.ai_threads_var,
+                bg=self.BG, fg=self.FG,
+                highlightthickness=0, length=100,
+                showvalue=False,
+                command=self._update_ai_threads).pack(side=tk.LEFT, padx=5)
+
+        self.ai_threads_display = tk.Label(threads_row, text="4",
+                                           bg=self.BG_SECONDARY, fg=self.WARNING,
+                                           font=("JetBrains Mono", 9, "bold"),
+                                           width=6)
+        self.ai_threads_display.pack(side=tk.LEFT)
+
+        capture_row = tk.Frame(self.ai_frame, bg=self.BG)
+        capture_row.pack(fill=tk.X, pady=3)
+
+        tk.Label(capture_row, text="截取模式:",
+                bg=self.BG, fg="#aac",
+                font=("JetBrains Mono", 9),
+                width=10, anchor="w").pack(side=tk.LEFT)
+
+        self.ai_capture_var = tk.StringVar(value="region")
+        tk.Radiobutton(capture_row, text="选定区域",
+                      variable=self.ai_capture_var, value="region",
+                      bg=self.BG, fg=self.FG,
+                      selectcolor=self.BG_SECONDARY,
+                      font=("JetBrains Mono", 9),
+                      cursor="hand2").pack(side=tk.LEFT, padx=5)
+        tk.Radiobutton(capture_row, text="屏幕中心",
+                      variable=self.ai_capture_var, value="center",
+                      bg=self.BG, fg=self.FG,
+                      selectcolor=self.BG_SECONDARY,
+                      font=("JetBrains Mono", 9),
+                      cursor="hand2").pack(side=tk.LEFT, padx=5)
+
+        tip_text = "AI模式: ONNX模型识别，支持所有QTE类型\n模型下载: github.com/Manuteaa/dbd_autoSkillCheck/releases\n放置到 models/ 目录即可"
+        tk.Label(self.ai_frame, text=tip_text,
+                bg=self.BG, fg="#888",
+                font=("JetBrains Mono", 8),
+                justify=tk.LEFT).pack(pady=(5, 0))
+
+        self._scan_models()
+
+    def _update_detection_method(self):
+        method = self.detection_method_var.get()
+        self.engine.detection_method = method
+
+        if method == "cv":
+            self.detection_status_label.config(
+                text="当前: 传统 CV (像素阈值检测)",
+                fg=self.SUCCESS
+            )
+            self.ai_frame.pack_forget()
+            self._log("切换到传统 CV 检测模式")
+        else:
+            self.detection_status_label.config(
+                text="当前: AI 模型 (ONNX 推理)",
+                fg=self.WARNING
+            )
+            self.ai_frame.pack(fill=tk.X, pady=(5, 0))
+            self._log("切换到 AI 模型检测模式")
+
+    def _update_ai_ante(self, value):
+        val = int(value)
+        self.engine.ai_hit_ante_ms = val
+        self.ai_ante_display.config(text=f"{val}ms")
+
+    def _update_ai_threads(self, value):
+        val = int(value)
+        self.engine.ai_cpu_threads = val
+        self.ai_threads_display.config(text=str(val))
+
+    def _scan_models(self):
+        models = AIDetector.scan_models()
+        model_names = [m["name"] for m in models]
+        self._available_models = models
+
+        menu = self.ai_model_menu["menu"]
+        menu.delete(0, tk.END)
+
+        if model_names:
+            for name in model_names:
+                menu.add_command(label=name,
+                                command=lambda n=name: self.ai_model_var.set(n))
+            self.ai_model_var.set(model_names[0])
+            self._log(f"找到 {len(models)} 个 AI 模型: {', '.join(model_names)}")
+        else:
+            menu.add_command(label="未找到模型",
+                            command=lambda: self.ai_model_var.set("未找到模型"))
+            self.ai_model_var.set("未找到模型")
+            self._log("未找到 AI 模型，请将 .onnx 文件放入 models/ 目录")
+
     def _build_control_section(self, parent):
         card = tk.Frame(parent, bg=self.BG)
         card.pack(fill=tk.X, pady=10)
@@ -597,6 +816,10 @@ class QTEGUI:
             ("trigger_count", "触发次数", "", self.SUCCESS),
             ("frame_count", "检测帧数", "", "#888"),
             ("hit_rate", "命中率", "%", self.SUCCESS),
+            ("auto_mode", "CV模式", "", self.SUCCESS),
+            ("speed", "指针速度", "", self.SUCCESS),
+            ("ai_prediction", "AI识别", "", self.WARNING),
+            ("ai_provider", "推理设备", "", self.WARNING),
         ]
 
         for i, (key, name, unit, color) in enumerate(stats_config):
@@ -1004,9 +1227,30 @@ class QTEGUI:
             self.red_param_displays[attr].config(text=display_val)
 
     def _start(self):
-        if self.engine.region is None:
+        if self.engine.region is None and not (
+            self.detection_method_var.get() == "ai"
+            and self.ai_capture_var.get() == "center"
+        ):
             messagebox.showwarning("警告", "请先设置监控区域")
             return
+
+        if self.detection_method_var.get() == "ai":
+            selected_model = self.ai_model_var.get()
+            if selected_model in ("未选择", "未找到模型"):
+                messagebox.showwarning("警告", "请先选择 AI 模型文件\n\n将 .onnx 文件放入 models/ 目录后点击🔍扫描")
+                return
+            model_path = f"models/{selected_model}"
+            if not os.path.exists(model_path):
+                messagebox.showerror("错误", f"模型文件不存在: {model_path}")
+                return
+            self.engine.detection_method = "ai"
+            self.engine.ai_model_path = model_path
+            self.engine.ai_use_gpu = (self.ai_device_var.get() == "gpu")
+            self.engine.ai_cpu_threads = self.ai_threads_var.get()
+            self.engine.ai_hit_ante_ms = self.ai_ante_var.get()
+            self.engine.ai_capture_mode = self.ai_capture_var.get()
+        else:
+            self.engine.detection_method = "cv"
 
         for attr, var in self.param_vars.items():
             setattr(self.engine, attr, var.get())
@@ -1044,9 +1288,14 @@ class QTEGUI:
         self.status_label.config(text="运行中 | F4暂停 点击停止结束", fg=self.SUCCESS)
 
         self._log("=" * 45)
-        self._log("引擎启动 (全自动速度检测)")
+        method_name = "AI 模型" if self.engine.detection_method == "ai" else "传统 CV"
+        self._log(f"引擎启动 (识别方式: {method_name})")
         self._log(f"区域: {self.engine.region}")
         self._log(f"检测频率: {self.engine.target_hz}Hz")
+        if self.engine.detection_method == "ai":
+            self._log(f"AI模型: {self.engine.ai_model_path}")
+            self._log(f"推理设备: {'GPU' if self.engine.ai_use_gpu else 'CPU'}")
+            self._log(f"截取模式: {self.engine.ai_capture_mode}")
         self._log("若触发次数增加但游戏无反应，请用管理员身份运行本程序")
         self._log("=" * 45)
         self._set_overlay_state()
@@ -1118,9 +1367,19 @@ class QTEGUI:
 
     def _update_stats(self):
         stats = self.engine.get_stats()
+        is_ai = self.detection_method_var.get() == "ai"
         for key, value in stats.items():
             if key in self.stats_labels:
-                self.stats_labels[key].config(text=str(value))
+                if key == "auto_mode" and is_ai:
+                    self.stats_labels[key].config(text="---", fg="#555")
+                elif key == "speed" and is_ai:
+                    self.stats_labels[key].config(text="---", fg="#555")
+                elif key == "ai_prediction" and not is_ai:
+                    self.stats_labels[key].config(text="---", fg="#555")
+                elif key == "ai_provider" and not is_ai:
+                    self.stats_labels[key].config(text="---", fg="#555")
+                else:
+                    self.stats_labels[key].config(text=str(value))
         self.root.after(500, self._update_stats)
 
     def _log(self, msg: str):
@@ -1145,7 +1404,7 @@ class QTEGUI:
 
     def _save_config(self):
         config = {
-            "version": "2.3",
+            "version": "2.4",
             "region": self.engine.region,
             "params": {attr: var.get() for attr, var in self.param_vars.items()},
             "red_params": {attr: var.get() for attr, var in self.red_param_vars.items()},
@@ -1166,6 +1425,14 @@ class QTEGUI:
             "mask": {
                 "outer_percent": self.outer_mask_var.get(),
                 "center_percent": self.center_mask_var.get(),
+            },
+            "detection": {
+                "method": self.detection_method_var.get(),
+                "ai_model": self.ai_model_var.get(),
+                "ai_device": self.ai_device_var.get(),
+                "ai_ante_ms": self.ai_ante_var.get(),
+                "ai_threads": self.ai_threads_var.get(),
+                "ai_capture_mode": self.ai_capture_var.get(),
             },
         }
         try:
@@ -1261,6 +1528,19 @@ class QTEGUI:
                     self.pico_selected_port = pico_port
                     self.pico_address_var.set(pico_port)
                     self._log(f"已加载 Pico 端口: {pico_port}")
+
+            # 加载识别方式配置
+            if "detection" in config:
+                det = config["detection"]
+                self.detection_method_var.set(det.get("method", "cv"))
+                self.ai_model_var.set(det.get("ai_model", "未选择"))
+                self.ai_device_var.set(det.get("ai_device", "cpu"))
+                self.ai_ante_var.set(det.get("ai_ante_ms", 20))
+                self.ai_threads_var.set(det.get("ai_threads", 4))
+                self.ai_capture_var.set(det.get("ai_capture_mode", "region"))
+                self._update_detection_method()
+                self._update_ai_ante(self.ai_ante_var.get())
+                self._update_ai_threads(self.ai_threads_var.get())
 
             self._log(f"配置已加载 (版本 {version})")
         except Exception as e:

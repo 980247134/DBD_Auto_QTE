@@ -1,8 +1,9 @@
 """
-QTE Auto Tool - Core Engine (v2.3)
+QTE Auto Tool - Core Engine (v2.4)
 High-performance screen analysis and auto-trigger system.
 
 Design Philosophy:
+- Dual detection: traditional CV or AI model (ONNX), user-selectable
 - Zero config: 480Hz auto-detects pointer speed, no mode switching needed
 - Hyperfocus is just speed change: auto-detected like any other speed
 - Auto-adaptive prediction: prediction window adjusts based on measured velocity
@@ -130,6 +131,19 @@ class QTEEngine:
         self._geom_xs = None
         self._geom_ys = None
         self._roi_mask = None
+
+        # AI detection settings
+        self.detection_method = "cv"
+        self.ai_model_path = "models/model.onnx"
+        self.ai_use_gpu = False
+        self.ai_cpu_threads = 4
+        self.ai_hit_ante_ms = 20
+        self.ai_capture_mode = "region"
+        self._ai_detector = None
+        self._ai_last_pred = 0
+        self._ai_last_desc = ""
+        self._ai_last_probs = {}
+        self._ai_last_hit = False
 
     def set_region(self, left: int, top: int, width: int, height: int):
         self.region = {
@@ -900,10 +914,12 @@ class QTEEngine:
             speed = self._measured_speed
             mode_label = self._detected_mode_label
             latency_log = list(self._latency_log)
+            ai_last_desc = self._ai_last_desc
+            ai_last_probs = dict(self._ai_last_probs)
 
         p99_latency = np.percentile(latency_log, 99) if latency_log else 0.0
 
-        return {
+        stats = {
             "avg_latency": f"{avg_latency:.2f}ms",
             "p99_latency": f"{p99_latency:.2f}ms",
             "max_latency": f"{max_latency:.2f}ms",
@@ -912,13 +928,193 @@ class QTEEngine:
             "hit_rate": f"{np.mean(hit_log) * 100:.1f}%" if hit_log else "0%",
             "auto_mode": mode_label,
             "speed": f"{speed:.0f}°/s",
+            "ai_prediction": ai_last_desc,
+            "ai_provider": self._ai_detector.check_provider() if self._ai_detector else "---",
         }
+
+        return stats
+
+    def _load_ai_model(self):
+        from ai_detector import AIDetector, is_onnxruntime_available
+        if not is_onnxruntime_available():
+            raise RuntimeError("onnxruntime 未安装，请运行: pip install onnxruntime")
+        self._ai_detector = AIDetector(
+            self.ai_model_path,
+            use_gpu=self.ai_use_gpu,
+            nb_cpu_threads=self.ai_cpu_threads
+        )
+        provider = self._ai_detector.check_provider()
+        print(f"[INFO] AI 模型已加载: {self.ai_model_path}")
+        print(f"[INFO] 推理设备: {provider}")
+
+    def _unload_ai_model(self):
+        if self._ai_detector is not None:
+            self._ai_detector.cleanup()
+            self._ai_detector = None
+
+    def _capture_ai(self, sct) -> np.ndarray:
+        if self.capture_backend == "obs":
+            return self._capture_ai_obs()
+
+        if self.ai_capture_mode == "center":
+            try:
+                monitor = sct.monitors[1]
+                screen_w = monitor["width"]
+                screen_h = monitor["height"]
+            except (IndexError, KeyError):
+                return None
+            crop_size = 224
+            left = (screen_w - crop_size) // 2
+            top = (screen_h - crop_size) // 2
+            if left < 0 or top < 0:
+                return None
+            region = {"left": left, "top": top, "width": crop_size, "height": crop_size}
+            shot = sct.grab(region)
+            raw = np.frombuffer(shot.raw, dtype=np.uint8).reshape((crop_size, crop_size, 4))
+            frame_bgr = raw[:, :, :3].copy()
+            return cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+        else:
+            if self.region is None:
+                return None
+            shot = sct.grab(self.region)
+            h, w = self.region["height"], self.region["width"]
+            raw = np.frombuffer(shot.raw, dtype=np.uint8).reshape((h, w, 4))
+            frame_bgr = raw[:, :, :3].copy()
+            frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+            return cv2.resize(frame_rgb, (224, 224), interpolation=cv2.INTER_LINEAR)
+
+    def _capture_ai_obs(self) -> np.ndarray:
+        if self._obs_capture is None:
+            backend = cv2.CAP_DSHOW if sys.platform == "win32" else 0
+            self._obs_capture = cv2.VideoCapture(self.obs_camera_index, backend)
+            if not self._obs_capture.isOpened():
+                print(f"[ERROR] 无法打开 OBS 虚拟摄像头")
+                self._obs_capture.release()
+                self._obs_capture = None
+                return None
+
+        ok, frame = self._obs_capture.read()
+        if not ok or frame is None:
+            return None
+
+        if self.ai_capture_mode == "center":
+            h, w = frame.shape[:2]
+            crop_size = 224
+            left = (w - crop_size) // 2
+            top = (h - crop_size) // 2
+            if left < 0 or top < 0:
+                return None
+            cropped = frame[top:top + crop_size, left:left + crop_size].copy()
+            return cv2.cvtColor(cropped, cv2.COLOR_BGR2RGB)
+        else:
+            if self.region is None:
+                return None
+            left = self.region["left"]
+            top = self.region["top"]
+            width = self.region["width"]
+            height = self.region["height"]
+            if top + height > frame.shape[0] or left + width > frame.shape[1]:
+                return None
+            cropped = frame[top:top + height, left:left + width].copy()
+            frame_rgb = cv2.cvtColor(cropped, cv2.COLOR_BGR2RGB)
+            return cv2.resize(frame_rgb, (224, 224), interpolation=cv2.INTER_LINEAR)
+
+    def run_loop_ai(self, enable_preview: bool = True):
+        self.running = True
+        self.paused = False
+
+        try:
+            self._load_ai_model()
+        except Exception as e:
+            print(f"[ERROR] AI模型加载失败: {e}")
+            self.running = False
+            return
+
+        interval = 1.0 / self.target_hz
+        last_preview_time = 0.0
+        last_hit_time = 0.0
+        hit_cooldown = 0.5
+
+        with mss.mss() as sct:
+            while self.running:
+                if self.paused:
+                    time.sleep(0.05)
+                    continue
+
+                t0 = time.perf_counter()
+
+                frame = self._capture_ai(sct)
+                if frame is None:
+                    time.sleep(0.01)
+                    continue
+
+                should_hit, pred, desc_cn, probs_dict, is_ante = self._ai_detector.predict(frame)
+
+                now = time.perf_counter()
+                triggered = False
+
+                if should_hit and (now - last_hit_time) >= hit_cooldown:
+                    if is_ante and self.ai_hit_ante_ms > 0:
+                        time.sleep(self.ai_hit_ante_ms / 1000.0)
+                    triggered = self.trigger()
+                    if triggered:
+                        last_hit_time = time.perf_counter()
+
+                with self._lock:
+                    self._frame_count += 1
+                    self._hit_log.append(1 if should_hit else 0)
+                    self._ai_last_pred = pred
+                    self._ai_last_desc = desc_cn
+                    self._ai_last_probs = dict(probs_dict)
+                    self._ai_last_hit = should_hit
+
+                if enable_preview and (t0 - last_preview_time) >= self.PREVIEW_INTERVAL:
+                    preview = self._draw_preview_ai(frame, pred, desc_cn, probs_dict, should_hit, triggered)
+                    with self._preview_lock:
+                        self._latest_preview = preview
+                    last_preview_time = t0
+
+                elapsed = time.perf_counter() - t0
+                with self._lock:
+                    latency_ms = elapsed * 1000
+                    self._latency_log.append(latency_ms)
+                    self._latency_sum += latency_ms
+                    self._latency_max = max(self._latency_max, latency_ms)
+                    self._latency_count += 1
+
+                sleep = interval - elapsed
+                if sleep > 0:
+                    time.sleep(sleep)
+
+    def _draw_preview_ai(self, frame_rgb: np.ndarray, pred: int, desc_cn: str,
+                         probs_dict: dict, should_hit: bool, triggered: bool) -> np.ndarray:
+        display = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
+        display = cv2.resize(display, (224, 224), interpolation=cv2.INTER_NEAREST)
+
+        color = (0, 255, 0) if triggered else ((0, 255, 255) if should_hit else (200, 200, 200))
+        status = f"{desc_cn} {'HIT!' if should_hit else ''} {'[TRIG]' if triggered else ''}"
+        cv2.putText(display, status, (5, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
+
+        if probs_dict:
+            top_pred = max(probs_dict, key=probs_dict.get)
+            top_prob = probs_dict[top_pred]
+            cv2.putText(display, f"{top_prob:.1%}", (5, 40), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.4, (150, 150, 150), 1)
+
+        if triggered:
+            cv2.rectangle(display, (0, 0), (223, 223), (0, 255, 0), 3)
+
+        return cv2.cvtColor(display, cv2.COLOR_BGR2RGB)
 
     def start(self, preview: bool = True):
         if self.thread and self.thread.is_alive():
             return
-        self.thread = threading.Thread(target=self.run_loop, args=(preview,),
-                                       daemon=True)
+        if self.detection_method == "ai":
+            self.thread = threading.Thread(target=self.run_loop_ai, args=(preview,),
+                                           daemon=True)
+        else:
+            self.thread = threading.Thread(target=self.run_loop, args=(preview,),
+                                           daemon=True)
         self.thread.start()
 
     def stop(self):
@@ -930,6 +1126,7 @@ class QTEEngine:
             self._latency_count = 0
         if self.thread and self.thread.is_alive():
             self.thread.join(timeout=2.0)
+        self._unload_ai_model()
         if self._obs_capture is not None:
             self._obs_capture.release()
             self._obs_capture = None
