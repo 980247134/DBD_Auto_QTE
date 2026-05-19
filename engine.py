@@ -18,11 +18,17 @@ import pydirectinput
 import time
 import threading
 import sys
-from collections import deque
+
+_IS_WINDOWS = sys.platform == "win32"
+
+if _IS_WINDOWS:
+    import ctypes
+    _winmm = ctypes.windll.winmm
+    _winmm.timeBeginPeriod(1)
 
 
 def _check_platform():
-    if sys.platform != "win32":
+    if not _IS_WINDOWS:
         print(f"[WARN] 当前系统为 {sys.platform}，pydirectinput 仅支持 Windows。")
         print("[WARN] 按键模拟功能将不可用。")
         return False
@@ -66,15 +72,18 @@ class QTEEngine:
         self.pico_connection = None
 
         self._lock = threading.Lock()
-        self._latency_log = deque(maxlen=500)
         self._trigger_count = 0
         self._frame_count = 0
-        self._hit_log = deque(maxlen=100)
+        self._hit_count = 0
+        self._hit_log_total = 0
         self._last_trigger_time = 0.0
 
-        self._latency_sum = 0.0
+        self._latency_mean = 0.0
+        self._latency_m2 = 0.0
         self._latency_max = 0.0
         self._latency_count = 0
+        self._latency_histogram = [0] * 64
+        self._hist_bucket_ms = 0.5
 
         self._preview_lock = threading.Lock()
         self._latest_preview = None
@@ -249,7 +258,9 @@ class QTEEngine:
 
                 with self._lock:
                     self._frame_count += 1
-                    self._hit_log.append(1 if should_hit else 0)
+                    self._hit_log_total += 1
+                    if should_hit:
+                        self._hit_count += 1
                     self._ai_last_pred = pred
                     self._ai_last_desc = desc_cn
                     self._ai_last_probs = dict(probs_dict)
@@ -264,14 +275,22 @@ class QTEEngine:
                 elapsed = time.perf_counter() - t0
                 with self._lock:
                     latency_ms = elapsed * 1000
-                    self._latency_log.append(latency_ms)
-                    self._latency_sum += latency_ms
-                    self._latency_max = max(self._latency_max, latency_ms)
                     self._latency_count += 1
+                    delta = latency_ms - self._latency_mean
+                    self._latency_mean += delta / self._latency_count
+                    delta2 = latency_ms - self._latency_mean
+                    self._latency_m2 += delta * delta2
+                    if latency_ms > self._latency_max:
+                        self._latency_max = latency_ms
+                    bucket = int(latency_ms / self._hist_bucket_ms)
+                    if bucket < 64:
+                        self._latency_histogram[bucket] += 1
 
                 sleep = interval - elapsed
-                if sleep > 0:
-                    time.sleep(sleep)
+                if sleep > 0.002:
+                    time.sleep(sleep - 0.001)
+                while time.perf_counter() - t0 < interval:
+                    pass
 
     def _draw_preview(self, frame_rgb: np.ndarray, pred: int, desc_cn: str,
                       probs_dict: dict, should_hit: bool, triggered: bool) -> np.ndarray:
@@ -301,30 +320,41 @@ class QTEEngine:
     @property
     def latency_log(self):
         with self._lock:
-            return list(self._latency_log)
+            return [self._latency_mean] if self._latency_count > 0 else []
+
+    def _compute_p99(self) -> float:
+        if self._latency_count == 0:
+            return 0.0
+        threshold = self._latency_count * 0.99
+        cumulative = 0
+        for i, count in enumerate(self._latency_histogram):
+            cumulative += count
+            if cumulative >= threshold:
+                return (i + 0.5) * self._hist_bucket_ms
+        return 63.5 * self._hist_bucket_ms
 
     def get_stats(self) -> dict:
         with self._lock:
             if self._latency_count == 0:
                 return {}
-            avg_latency = self._latency_sum / self._latency_count
+            avg_latency = self._latency_mean
             max_latency = self._latency_max
-            hit_log = list(self._hit_log)
+            hit_count = self._hit_count
+            hit_total = self._hit_log_total
             trigger_count = self._trigger_count
             frame_count = self._frame_count
-            latency_log = list(self._latency_log)
             ai_last_desc = self._ai_last_desc
             ai_last_probs = dict(self._ai_last_probs)
 
-        p99_latency = np.percentile(latency_log, 99) if latency_log else 0.0
+        hit_rate = (hit_count / hit_total * 100) if hit_total > 0 else 0.0
 
         return {
             "avg_latency": f"{avg_latency:.2f}ms",
-            "p99_latency": f"{p99_latency:.2f}ms",
+            "p99_latency": f"{self._compute_p99():.2f}ms",
             "max_latency": f"{max_latency:.2f}ms",
             "trigger_count": trigger_count,
             "frame_count": frame_count,
-            "hit_rate": f"{np.mean(hit_log) * 100:.1f}%" if hit_log else "0%",
+            "hit_rate": f"{hit_rate:.1f}%",
             "ai_prediction": ai_last_desc,
             "ai_provider": self._ai_detector.check_provider() if self._ai_detector else "---",
         }
@@ -342,9 +372,13 @@ class QTEEngine:
         self.running = False
         self.paused = False
         with self._lock:
-            self._latency_sum = 0.0
+            self._latency_mean = 0.0
+            self._latency_m2 = 0.0
             self._latency_max = 0.0
             self._latency_count = 0
+            self._latency_histogram = [0] * 64
+            self._hit_count = 0
+            self._hit_log_total = 0
         if self.thread and self.thread.is_alive():
             self.thread.join(timeout=2.0)
         self._unload_ai_model()

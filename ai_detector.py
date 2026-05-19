@@ -26,6 +26,9 @@ class AIDetector:
     _SCALE = (1.0 / 255.0) / STD
     _BIAS = -MEAN / STD
 
+    _SCALE_CHW = _SCALE[:, None, None]
+    _BIAS_CHW = _BIAS[:, None, None]
+
     PRED_DICT = {
         0: {"desc": "None", "desc_cn": "无", "hit": False},
         1: {"desc": "repair-heal (great)", "desc_cn": "修复/治疗 (完美)", "hit": True},
@@ -57,6 +60,9 @@ class AIDetector:
 
     def _load_model(self):
         sess_options = ort.SessionOptions()
+        sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        sess_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+        sess_options.intra_op_num_threads = 0
 
         available = ort.get_available_providers()
         preferred = ['CUDAExecutionProvider', 'DmlExecutionProvider', 'CPUExecutionProvider']
@@ -67,10 +73,14 @@ class AIDetector:
         )
         self.input_name = self.ort_session.get_inputs()[0].name
 
-    def _preprocess(self, img_rgb: np.ndarray) -> np.ndarray:
+        input_info = self.ort_session.get_inputs()[0]
+        self._input_shape = input_info.shape
+        self._input_buffer = np.empty(self._input_shape, dtype=np.float32)
+
+    def _preprocess(self, img_rgb: np.ndarray):
         img = np.transpose(img_rgb, (2, 0, 1)).astype(np.float32)
-        img = img * self._SCALE[:, None, None] + self._BIAS[:, None, None]
-        return np.ascontiguousarray(img[np.newaxis, ...])
+        np.multiply(img, self._SCALE_CHW, out=self._input_buffer[0])
+        np.add(self._input_buffer[0], self._BIAS_CHW, out=self._input_buffer[0])
 
     @staticmethod
     def _softmax(x: np.ndarray) -> np.ndarray:
@@ -78,8 +88,8 @@ class AIDetector:
         return exp_x / np.sum(exp_x)
 
     def predict(self, frame_rgb_224: np.ndarray) -> tuple:
-        input_tensor = self._preprocess(frame_rgb_224)
-        output = self.ort_session.run(None, {self.input_name: input_tensor})
+        self._preprocess(frame_rgb_224)
+        output = self.ort_session.run(None, {self.input_name: self._input_buffer})
         logits = np.squeeze(output)
         pred = int(np.argmax(logits))
         probs = self._softmax(logits)
