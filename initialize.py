@@ -23,6 +23,7 @@ REQUIRED_MODULES = {
     "numpy": "numpy",
     "PIL": "Pillow",
     "serial": "pyserial",
+    "onnxruntime": "onnxruntime",
 }
 
 

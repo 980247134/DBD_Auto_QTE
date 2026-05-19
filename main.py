@@ -1,16 +1,17 @@
 """
-QTE Auto Tool - Main GUI Application (v2.3)
-Zero-config interface: auto speed detection handles everything.
+QTE Auto Tool - Main GUI Application (v3.0)
+AI model detection only (ONNX), no traditional CV.
 
 Key Design:
+- AI model detection only, ONNX runtime required
 - No mode buttons, no Hyperfocus toggle: 480Hz auto-detects ALL speed changes
-- Red detection params exposed for fine-tuning
 - Clean, minimal UI for in-game use
 """
 
 import tkinter as tk
 from tkinter import messagebox
 from PIL import Image, ImageTk
+import cv2
 import numpy as np
 import time
 import json
@@ -22,15 +23,12 @@ from ctypes import wintypes
 
 from engine import QTEEngine
 from usb_sender import get_pico_usb_sender
+from ai_detector import AIDetector
 from selector import RegionSelector
 from collapsible_frame import CollapsibleFrame
 
 
 class QTEGUI:
-    """
-    Simplified application window.
-    Auto speed detection means no mode switching needed.
-    """
 
     BG = "#1a1a2e"
     BG_SECONDARY = "#16213e"
@@ -42,7 +40,7 @@ class QTEGUI:
 
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("QTE Auto Tool v2.3 - Zero Config")
+        self.root.title("QTE Auto Tool v3.0 - AI Detection")
         self.root.geometry("1100x850")
         self.root.configure(bg=self.BG)
         self.root.minsize(950, 750)
@@ -71,7 +69,7 @@ class QTEGUI:
                 font=("JetBrains Mono", 22, "bold"),
                 bg=self.BG, fg=self.ACCENT).pack(side=tk.LEFT)
 
-        tk.Label(title_frame, text="QTE Auto-Detect | F4 暂停/继续",
+        tk.Label(title_frame, text="AI Detection | F4 暂停/继续",
                 font=("JetBrains Mono", 11),
                 bg=self.BG, fg="#666").pack(side=tk.LEFT, padx=15, pady=8)
 
@@ -85,6 +83,7 @@ class QTEGUI:
         self._build_region_section(left)
         self._build_capture_section(left)
         self._build_input_section(left)
+        self._build_ai_config_section(left)
         self._build_control_section(left)
         self._build_param_section(left)
         self._build_feature_section(left)
@@ -96,7 +95,6 @@ class QTEGUI:
 
         self._build_preview_section(right)
         self._build_status_section(right)
-        self._build_color_debug_section(right)
 
         status = tk.Frame(self.root, bg="#0f0f23", height=28)
         status.pack(fill=tk.X, side=tk.BOTTOM)
@@ -195,19 +193,16 @@ class QTEGUI:
                  relief=tk.FLAT, padx=5, pady=3).pack(side=tk.LEFT, padx=2)
 
     def _build_capture_section(self, parent):
-        """图像采集方式选择 - 独立显眼的区域"""
         card = CollapsibleFrame(parent, title="🎥 图像采集方式", bg=self.BG, fg=self.SUCCESS)
         card.pack(fill=tk.X, pady=(0, 10))
         content = card.get_content_frame()
 
-        # 当前采集方式显示
         self.capture_status_label = tk.Label(content, text="当前: MSS 直接截屏",
                                             bg=self.BG_SECONDARY, fg=self.SUCCESS,
                                             font=("JetBrains Mono", 10, "bold"),
                                             width=35, height=1)
         self.capture_status_label.pack(fill=tk.X, pady=(0, 8))
 
-        # 采集方式选择按钮
         backend_row = tk.Frame(content, bg=self.BG)
         backend_row.pack(fill=tk.X, pady=5)
 
@@ -240,7 +235,6 @@ class QTEGUI:
                       cursor="hand2")
         self.btn_obs.pack(side=tk.LEFT, padx=8)
 
-        # OBS摄像头编号设置
         self.obs_frame = tk.Frame(content, bg=self.BG)
         self.obs_frame.pack(fill=tk.X, pady=(8, 0))
 
@@ -271,7 +265,6 @@ class QTEGUI:
                  width=6, cursor="hand2",
                  relief=tk.FLAT, padx=3, pady=2).pack(side=tk.LEFT)
 
-        # 提示信息
         tip_text = "MSS: 直接截屏，低延迟\nOBS: 通过虚拟摄像头，兼容性好\n点击'扫描'查找可用摄像头"
         tk.Label(content, text=tip_text,
                 bg=self.BG, fg="#888",
@@ -279,19 +272,16 @@ class QTEGUI:
                 justify=tk.LEFT).pack(pady=(5, 0))
 
     def _build_input_section(self, parent):
-        """输入方式选择 - Pico 2W硬件输入"""
         card = CollapsibleFrame(parent, title="⌨️ 输入方式", bg=self.BG, fg=self.SUCCESS)
         card.pack(fill=tk.X, pady=(0, 10))
         content = card.get_content_frame()
 
-        # 当前输入方式显示
         self.input_status_label = tk.Label(content, text="当前: PyDirectInput 软件输入",
                                            bg=self.BG_SECONDARY, fg=self.SUCCESS,
                                            font=("JetBrains Mono", 10, "bold"),
                                            width=35, height=1)
         self.input_status_label.pack(fill=tk.X, pady=(0, 8))
 
-        # 输入方式选择按钮
         input_row = tk.Frame(content, bg=self.BG)
         input_row.pack(fill=tk.X, pady=5)
 
@@ -324,7 +314,6 @@ class QTEGUI:
                       cursor="hand2")
         self.btn_pico.pack(side=tk.LEFT, padx=8)
 
-        # Pico 2W 连接控制
         self.pico_frame = tk.Frame(content, bg=self.BG)
         self.pico_frame.pack(fill=tk.X, pady=(8, 0))
 
@@ -356,7 +345,6 @@ class QTEGUI:
                  relief=tk.FLAT, padx=3, pady=2)
         self.btn_pico_connect.pack(side=tk.LEFT, padx=2)
 
-        # 提示信息
         tip_text = "软件输入: PyDirectInput\nPico 2W: USB 硬件输入，更低延迟"
         tip_color = "#888"
 
@@ -364,6 +352,139 @@ class QTEGUI:
                 bg=self.BG, fg=tip_color,
                 font=("JetBrains Mono", 8),
                 justify=tk.LEFT).pack(pady=(5, 0))
+
+    def _build_ai_config_section(self, parent):
+        card = CollapsibleFrame(parent, title="🧠 AI 模型配置", bg=self.BG, fg=self.WARNING)
+        card.pack(fill=tk.X, pady=(0, 10))
+        content = card.get_content_frame()
+
+        model_row = tk.Frame(content, bg=self.BG)
+        model_row.pack(fill=tk.X, pady=3)
+
+        tk.Label(model_row, text="模型文件:",
+                bg=self.BG, fg="#aac",
+                font=("JetBrains Mono", 9),
+                width=10, anchor="w").pack(side=tk.LEFT)
+
+        self.ai_model_var = tk.StringVar(value="未选择")
+        self.ai_model_menu = tk.OptionMenu(model_row, self.ai_model_var, "未选择")
+        self.ai_model_menu.config(bg=self.BG_SECONDARY, fg=self.FG,
+                                  font=("JetBrains Mono", 9),
+                                  highlightthickness=0, width=16,
+                                  activebackground=self.BG,
+                                  activeforeground=self.SUCCESS)
+        self.ai_model_menu.pack(side=tk.LEFT, padx=5)
+
+        tk.Button(model_row, text="🔍",
+                 command=self._scan_models,
+                 bg=self.ACCENT, fg="white",
+                 font=("JetBrains Mono", 8, "bold"),
+                 width=3, cursor="hand2",
+                 relief=tk.FLAT, padx=3, pady=2).pack(side=tk.LEFT, padx=2)
+
+        ante_row = tk.Frame(content, bg=self.BG)
+        ante_row.pack(fill=tk.X, pady=3)
+
+        tk.Label(ante_row, text="预判延迟:",
+                bg=self.BG, fg="#aac",
+                font=("JetBrains Mono", 9),
+                width=10, anchor="w").pack(side=tk.LEFT)
+
+        self.ai_ante_var = tk.IntVar(value=20)
+        tk.Scale(ante_row, from_=0, to=50, resolution=5,
+                orient=tk.HORIZONTAL, variable=self.ai_ante_var,
+                bg=self.BG, fg=self.FG,
+                highlightthickness=0, length=100,
+                showvalue=False,
+                command=self._update_ai_ante).pack(side=tk.LEFT, padx=5)
+
+        self.ai_ante_display = tk.Label(ante_row, text="20ms",
+                                        bg=self.BG_SECONDARY, fg=self.WARNING,
+                                        font=("JetBrains Mono", 9, "bold"),
+                                        width=6)
+        self.ai_ante_display.pack(side=tk.LEFT)
+
+        conf_row = tk.Frame(content, bg=self.BG)
+        conf_row.pack(fill=tk.X, pady=3)
+
+        tk.Label(conf_row, text="置信度:",
+                bg=self.BG, fg="#aac",
+                font=("JetBrains Mono", 9),
+                width=10, anchor="w").pack(side=tk.LEFT)
+
+        self.ai_confidence_var = tk.IntVar(value=0)
+        tk.Scale(conf_row, from_=0, to=100, resolution=5,
+                orient=tk.HORIZONTAL, variable=self.ai_confidence_var,
+                bg=self.BG, fg=self.FG,
+                highlightthickness=0, length=100,
+                showvalue=False,
+                command=self._update_ai_confidence).pack(side=tk.LEFT, padx=5)
+
+        self.ai_confidence_display = tk.Label(conf_row, text="0%",
+                                                bg=self.BG_SECONDARY, fg=self.WARNING,
+                                                font=("JetBrains Mono", 9, "bold"),
+                                                width=6)
+        self.ai_confidence_display.pack(side=tk.LEFT)
+
+        capture_row = tk.Frame(content, bg=self.BG)
+        capture_row.pack(fill=tk.X, pady=3)
+
+        tk.Label(capture_row, text="截取模式:",
+                bg=self.BG, fg="#aac",
+                font=("JetBrains Mono", 9),
+                width=10, anchor="w").pack(side=tk.LEFT)
+
+        self.ai_capture_var = tk.StringVar(value="region")
+        tk.Radiobutton(capture_row, text="选定区域",
+                      variable=self.ai_capture_var, value="region",
+                      bg=self.BG, fg=self.FG,
+                      selectcolor=self.BG_SECONDARY,
+                      font=("JetBrains Mono", 9),
+                      cursor="hand2").pack(side=tk.LEFT, padx=5)
+        tk.Radiobutton(capture_row, text="屏幕中心",
+                      variable=self.ai_capture_var, value="center",
+                      bg=self.BG, fg=self.FG,
+                      selectcolor=self.BG_SECONDARY,
+                      font=("JetBrains Mono", 9),
+                      cursor="hand2").pack(side=tk.LEFT, padx=5)
+
+        tip_text = "ONNX模型识别，支持所有QTE类型\n模型下载: github.com/Manuteaa/dbd_autoSkillCheck/releases\n放置到 models/ 目录即可"
+        tk.Label(content, text=tip_text,
+                bg=self.BG, fg="#888",
+                font=("JetBrains Mono", 8),
+                justify=tk.LEFT).pack(pady=(5, 0))
+
+        self._scan_models()
+
+    def _update_ai_ante(self, value):
+        val = int(value)
+        self.engine.ai_hit_ante_ms = val
+        self.ai_ante_display.config(text=f"{val}ms")
+
+    def _update_ai_confidence(self, value):
+        val = int(value)
+        self.engine.ai_confidence_threshold = val / 100.0
+        self.ai_confidence_display.config(text=f"{val}%")
+
+    def _scan_models(self):
+        models = AIDetector.scan_models()
+        model_names = [m["name"] for m in models]
+        self._available_models = models
+
+        menu = self.ai_model_menu["menu"]
+        menu.delete(0, tk.END)
+
+        if model_names:
+            for name in model_names:
+                menu.add_command(label=name,
+                                command=lambda n=name: self.ai_model_var.set(n))
+            self.ai_model_var.set(model_names[0])
+            self._log(f"找到 {len(models)} 个 AI 模型: {', '.join(model_names)}")
+        else:
+            menu.add_command(label="未找到模型",
+                            command=lambda: self.ai_model_var.set("未找到模型"))
+            self.ai_model_var.set("未找到模型")
+            self._log("未找到 AI 模型，请将 .onnx 文件放入 models/ 目录")
 
     def _build_control_section(self, parent):
         card = tk.Frame(parent, bg=self.BG)
@@ -405,12 +526,6 @@ class QTEGUI:
              "屏幕检测循环频率，建议480Hz"),
             ("触发冷却", "cooldown_ms", "ms", 0, 200, 30,
              "每次触发后的锁定时间，防止连发"),
-            ("预判补偿", "predict_ms", "ms", 0, 20, 0,
-             "提前触发时间，补偿检测+按键延迟"),
-            ("白色亮度", "white_v_low", "", 100, 255, 166,
-             "判定区白色亮度阈值"),
-            ("色差容忍", "white_s_max", "", 10, 100, 50,
-             "判定区RGB通道最大允许差异"),
         ]
 
         self.param_vars = {}
@@ -449,105 +564,9 @@ class QTEGUI:
                 widget.bind("<Leave>", lambda e: self._hide_tooltip())
 
     def _build_feature_section(self, parent):
-        """Minimal feature toggles + red params + delay."""
         card = CollapsibleFrame(parent, title="🔬 高级设置", bg=self.BG, fg=self.FG)
         card.pack(fill=tk.X, pady=10)
         content = card.get_content_frame()
-
-        # Red detection params (collapsible-style compact)
-        red_frame = tk.LabelFrame(content, text="🔴 红色检测参数",
-                                 bg=self.BG, fg="#e74c3c",
-                                 font=("JetBrains Mono", 9, "bold"),
-                                 padx=8, pady=6)
-        red_frame.pack(fill=tk.X, pady=5)
-
-        red_params = [
-            ("R下限", "red_min_r", "", 50, 255, 180),
-            ("R优势", "red_min_delta", "", 5, 50, 50),
-            ("亮度上限", "red_max_avg", "", 150, 255, 220),
-            ("饱和度", "red_saturation", "", 0.1, 0.9, 0.4),
-        ]
-
-        self.red_param_vars = {}
-        self.red_param_displays = {}
-
-        for label, attr, unit, min_v, max_v, default in red_params:
-            row = tk.Frame(red_frame, bg=self.BG)
-            row.pack(fill=tk.X, pady=2)
-
-            tk.Label(row, text=f"{label}:",
-                    bg=self.BG, fg="#ff9999",
-                    font=("JetBrains Mono", 8),
-                    width=8, anchor="w").pack(side=tk.LEFT)
-
-            if attr == "red_saturation":
-                var = tk.DoubleVar(value=default)
-                scale = tk.Scale(row, from_=min_v, to=max_v,
-                               orient=tk.HORIZONTAL, variable=var,
-                               resolution=0.05,
-                               bg=self.BG, fg=self.FG,
-                               highlightthickness=0, length=120,
-                               showvalue=False,
-                               command=lambda v, a=attr: self._update_red_param(a, v))
-            else:
-                var = tk.IntVar(value=default)
-                scale = tk.Scale(row, from_=min_v, to=max_v,
-                               orient=tk.HORIZONTAL, variable=var,
-                               bg=self.BG, fg=self.FG,
-                               highlightthickness=0, length=120,
-                               showvalue=False,
-                               command=lambda v, a=attr: self._update_red_param(a, v))
-
-            self.red_param_vars[attr] = var
-            scale.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=3)
-
-            display_val = f"{default:.2f}" if isinstance(default, float) else str(default)
-            val_lbl = tk.Label(row, text=display_val,
-                              bg=self.BG_SECONDARY, fg="#ff6b6b",
-                              font=("JetBrains Mono", 8, "bold"),
-                              width=6)
-            val_lbl.pack(side=tk.LEFT)
-            self.red_param_displays[attr] = val_lbl
-
-        # Delay compensation
-        delay_frame = tk.Frame(content, bg=self.BG)
-        delay_frame.pack(fill=tk.X, pady=(8, 0))
-
-        tk.Label(delay_frame, text="延迟补偿:",
-                bg=self.BG, fg="#aaa",
-                font=("JetBrains Mono", 9),
-                width=12, anchor="w").pack(side=tk.LEFT)
-
-        self.delay_degree_var = tk.IntVar(value=3)
-        tk.Scale(delay_frame, from_=-30, to=30,
-                orient=tk.HORIZONTAL,
-                variable=self.delay_degree_var,
-                bg=self.BG, fg=self.FG,
-                highlightthickness=0, length=100,
-                showvalue=False,
-                command=self._update_delay).pack(side=tk.LEFT, padx=5)
-
-        self.delay_display = tk.Label(delay_frame, text="3°",
-                                     bg=self.BG_SECONDARY, fg=self.WARNING,
-                                     font=("JetBrains Mono", 9, "bold"),
-                                     width=5)
-        self.delay_display.pack(side=tk.LEFT)
-
-        mask_frame = tk.LabelFrame(content, text="⭕ 遮罩设置",
-                                  bg=self.BG, fg="#9ad",
-                                  font=("JetBrains Mono", 9, "bold"),
-                                  padx=8, pady=6)
-        mask_frame.pack(fill=tk.X, pady=(10, 0))
-
-        self.outer_mask_var = tk.IntVar(value=100)
-        self.outer_mask_display = self._build_mask_slider(
-            mask_frame, "外圈大小", self.outer_mask_var, 50, 110, "%", self._update_outer_mask
-        )
-
-        self.center_mask_var = tk.IntVar(value=0)
-        self.center_mask_display = self._build_mask_slider(
-            mask_frame, "中心遮罩", self.center_mask_var, 0, 70, "%", self._update_center_mask
-        )
 
         save_frame = tk.Frame(content, bg=self.BG)
         save_frame.pack(fill=tk.X, pady=(10, 0))
@@ -559,30 +578,9 @@ class QTEGUI:
                  cursor="hand2", relief=tk.FLAT,
                  padx=8, pady=5).pack(side=tk.LEFT, fill=tk.X, expand=True)
 
-        tk.Label(save_frame, text="保存频率/阈值/延迟/区域",
+        tk.Label(save_frame, text="保存频率/区域/AI配置",
                  bg=self.BG, fg="#888",
                  font=("JetBrains Mono", 8)).pack(side=tk.LEFT, padx=8)
-
-    def _build_mask_slider(self, parent, label, var, min_v, max_v, unit, command):
-        row = tk.Frame(parent, bg=self.BG)
-        row.pack(fill=tk.X, pady=2)
-        tk.Label(row, text=f"{label}:",
-                bg=self.BG, fg="#aac",
-                font=("JetBrains Mono", 8),
-                width=10, anchor="w").pack(side=tk.LEFT)
-        tk.Scale(row, from_=min_v, to=max_v,
-                orient=tk.HORIZONTAL,
-                variable=var,
-                bg=self.BG, fg=self.FG,
-                highlightthickness=0, length=110,
-                showvalue=False,
-                command=command).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=3)
-        display = tk.Label(row, text=f"{var.get()}{unit}",
-                          bg=self.BG_SECONDARY, fg="#9ad",
-                          font=("JetBrains Mono", 8, "bold"),
-                          width=6)
-        display.pack(side=tk.LEFT)
-        return display
 
     def _build_stats_section(self, parent):
         card = CollapsibleFrame(parent, title="📊 实时统计", bg=self.BG, fg=self.FG)
@@ -597,6 +595,9 @@ class QTEGUI:
             ("trigger_count", "触发次数", "", self.SUCCESS),
             ("frame_count", "检测帧数", "", "#888"),
             ("hit_rate", "命中率", "%", self.SUCCESS),
+            ("ai_prediction", "AI识别", "", self.WARNING),
+            ("ai_confidence", "置信度", "", self.WARNING),
+            ("ai_provider", "推理设备", "", self.WARNING),
         ]
 
         for i, (key, name, unit, color) in enumerate(stats_config):
@@ -658,7 +659,6 @@ class QTEGUI:
                     font=("JetBrains Mono", 8)).pack(side=tk.LEFT, padx=6)
 
     def _build_status_section(self, parent):
-        """Compact auto-detect status panel."""
         card = CollapsibleFrame(parent, title="🎯 自动检测状态", bg=self.BG, fg=self.FG)
         card.pack(fill=tk.X, pady=(0, 10))
         content = card.get_content_frame()
@@ -680,27 +680,6 @@ class QTEGUI:
                                         bg=self.BG_SECONDARY, fg=self.SUCCESS,
                                         font=("JetBrains Mono", 10, "bold"))
         self.speed_indicator.pack(side=tk.LEFT, padx=15)
-
-    def _build_color_debug_section(self, parent):
-        card = CollapsibleFrame(parent, title="🎨 颜色调试", bg=self.BG, fg=self.FG)
-        card.pack(fill=tk.X, pady=(0, 10))
-        content = card.get_content_frame()
-
-        self.color_info = tk.Label(content,
-            text="点击预览图可查看该位置颜色值\n"
-                 "速度自动检测：覆盖所有QTE类型和Hyperfocus\n"
-                 "红色参数可在左侧调整",
-            bg=self.BG_SECONDARY, fg="#888",
-            font=("JetBrains Mono", 10),
-            justify=tk.LEFT, height=4)
-        self.color_info.pack(fill=tk.X, padx=5, pady=5)
-
-        tk.Label(content,
-                text="💡 提示: 引擎自动检测指针速度，Hyperfocus加速也会被自动捕获\n"
-                     "   点击启动检测开始，点击停止结束",
-                bg=self.BG, fg=self.WARNING,
-                font=("JetBrains Mono", 9),
-                wraplength=450, justify=tk.LEFT).pack()
 
     # === Event Handlers ===
 
@@ -774,16 +753,10 @@ class QTEGUI:
                  width=15, cursor="hand2",
                  relief=tk.FLAT, pady=5).pack(pady=15)
 
-    def _update_delay(self, value):
-        val = int(value)
-        self.engine.delay_degree = val
-        self.delay_display.config(text=f"{val}°")
-
     def _update_capture_backend(self):
         backend = self.capture_backend_var.get()
         self.engine.capture_backend = backend
 
-        # 更新状态显示
         if backend == "mss":
             self.capture_status_label.config(
                 text="当前: MSS 直接截屏",
@@ -805,7 +778,6 @@ class QTEGUI:
             self.engine._obs_capture.release()
             self.engine._obs_capture = None
 
-        # 如果当前是OBS模式，更新状态显示
         if self.capture_backend_var.get() == "obs":
             self.capture_status_label.config(
                 text=f"当前: OBS 虚拟摄像头 (编号 {val})",
@@ -814,11 +786,9 @@ class QTEGUI:
             self._log(f"OBS 摄像头编号已更改为 {val}")
 
     def _update_input_method(self):
-        """更新输入方式"""
         method = self.input_method_var.get()
         self.engine.input_method = method
 
-        # 更新状态显示
         if method == "pydirectinput":
             self.input_status_label.config(
                 text="当前: PyDirectInput 软件输入",
@@ -841,7 +811,6 @@ class QTEGUI:
                 self._log("⚠️ Pico 2W 未连接，请先扫描并连接设备")
 
     def _scan_pico_devices(self):
-        """扫描Pico 2W设备（USB串口）"""
         self._log("=" * 45)
         self._log("开始扫描 Pico 2W USB 设备...")
         self.btn_pico_connect.config(state=tk.DISABLED)
@@ -859,7 +828,6 @@ class QTEGUI:
         threading.Thread(target=scan_thread, daemon=True).start()
 
     def _on_pico_scan_complete(self, devices):
-        """Pico扫描完成回调"""
         self.btn_pico_connect.config(state=tk.NORMAL)
 
         if not devices:
@@ -871,26 +839,21 @@ class QTEGUI:
                 "未找到 Pico 2W 设备\n\n请确保:\n1. Pico 2W 已上传固件并启动\n2. USB 已连接")
             return
 
-        # 显示找到的设备
         self._log(f"找到 {len(devices)} 个设备:")
         for i, dev in enumerate(devices):
             self._log(f"  [{i}] {dev['port']} - {dev['description']}")
 
-        # 如果只有一个设备，自动选择
         if len(devices) == 1:
             self.pico_selected_port = devices[0]['port']
             self.pico_address_var.set(devices[0]['port'])
             self._log(f"自动选择: {devices[0]['description']}")
         else:
-            # 多个设备，让用户选择
             device_list = [f"{d['description']} ({d['port']})" for d in devices]
-            # 简化：选择第一个
             self.pico_selected_port = devices[0]['port']
             self.pico_address_var.set(devices[0]['port'])
             self._log(f"已选择第一个设备: {devices[0]['description']}")
 
     def _connect_pico(self):
-        """连接到Pico 2W"""
         if not hasattr(self, 'pico_selected_port') or not self.pico_selected_port:
             messagebox.showwarning("提示", "请先扫描并选择设备")
             return
@@ -912,7 +875,6 @@ class QTEGUI:
         threading.Thread(target=connect_thread, daemon=True).start()
 
     def _on_pico_connect_complete(self, success):
-        """Pico连接完成回调"""
         if success:
             pico_sender = get_pico_usb_sender()
             self.engine.pico_connection = pico_sender
@@ -930,7 +892,6 @@ class QTEGUI:
             messagebox.showerror("连接失败", "无法连接到 Pico 2W\n\n请检查设备状态")
 
     def _disconnect_pico(self):
-        """断开Pico 2W连接"""
         pico_sender = get_pico_usb_sender()
         pico_sender.disconnect()
         self.engine.pico_connection = None
@@ -942,11 +903,22 @@ class QTEGUI:
         self._log("Pico 2W 已断开连接")
 
     def _scan_cameras(self):
-        """扫描所有可用的摄像头"""
         self._log("=" * 45)
         self._log("开始扫描摄像头...")
 
-        cameras = self.engine.scan_cameras(max_index=10)
+        cameras = []
+        for i in range(10):
+            backend = cv2.CAP_DSHOW if sys.platform == "win32" else 0
+            cap = cv2.VideoCapture(i, backend)
+            if cap.isOpened():
+                w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                cameras.append({"index": i, "resolution": f"{w}x{h}"})
+                cap.release()
+            else:
+                cap.release()
+                if i > 0 and len(cameras) == 0:
+                    continue
 
         if not cameras:
             self._log("未找到任何可用摄像头")
@@ -960,7 +932,6 @@ class QTEGUI:
             for cam in cameras:
                 self._log(f"  编号 {cam['index']}: {cam['resolution']}")
 
-            # 如果只有一个摄像头，自动选择
             if len(cameras) == 1:
                 self.obs_index_var.set(cameras[0]['index'])
                 self._update_obs_index(str(cameras[0]['index']))
@@ -974,52 +945,38 @@ class QTEGUI:
 
         self._log("=" * 45)
 
-    def _update_outer_mask(self, value):
-        val = int(value)
-        self.engine.set_mask_settings(outer_percent=val)
-        self.outer_mask_display.config(text=f"{val}%")
-
-    def _update_center_mask(self, value):
-        val = int(value)
-        self.engine.set_mask_settings(center_percent=val)
-        self.center_mask_display.config(text=f"{val}%")
-
     def _update_param(self, attr: str, value: str):
         val = int(value)
         setattr(self.engine, attr, val)
-        units = {"target_hz": "Hz", "cooldown_ms": "ms",
-                "predict_ms": "ms", "white_v_low": "", "white_s_max": ""}
+        units = {"target_hz": "Hz", "cooldown_ms": "ms"}
         unit = units.get(attr, "")
         if attr in self.param_displays:
             self.param_displays[attr].config(text=f"{val}{unit}")
 
-    def _update_red_param(self, attr: str, value: str):
-        if attr == "red_saturation":
-            val = float(value)
-        else:
-            val = int(value)
-        setattr(self.engine, attr, val)
-        display_val = f"{val:.2f}" if isinstance(val, float) else str(val)
-        if attr in self.red_param_displays:
-            self.red_param_displays[attr].config(text=display_val)
-
     def _start(self):
-        if self.engine.region is None:
+        if self.engine.region is None and self.ai_capture_var.get() != "center":
             messagebox.showwarning("警告", "请先设置监控区域")
             return
 
+        selected_model = self.ai_model_var.get()
+        if selected_model in ("未选择", "未找到模型"):
+            messagebox.showwarning("警告", "请先选择 AI 模型文件\n\n将 .onnx 文件放入 models/ 目录后点击🔍扫描")
+            return
+        model_path = f"models/{selected_model}"
+        if not os.path.exists(model_path):
+            messagebox.showerror("错误", f"模型文件不存在: {model_path}")
+            return
+
+        self.engine.ai_model_path = model_path
+        self.engine.ai_hit_ante_ms = self.ai_ante_var.get()
+        self.engine.ai_confidence_threshold = self.ai_confidence_var.get() / 100.0
+        self.engine.ai_capture_mode = self.ai_capture_var.get()
+
         for attr, var in self.param_vars.items():
             setattr(self.engine, attr, var.get())
-        for attr, var in self.red_param_vars.items():
-            setattr(self.engine, attr, var.get())
 
-        self.engine.delay_degree = self.delay_degree_var.get()
         self.engine.capture_backend = self.capture_backend_var.get()
         self.engine.obs_camera_index = self.obs_index_var.get()
-        self.engine.set_mask_settings(
-            outer_percent=self.outer_mask_var.get(),
-            center_percent=self.center_mask_var.get(),
-        )
 
         self.btn_start.config(state=tk.DISABLED, text="2秒后启动",
                              fg=self.WARNING)
@@ -1030,7 +987,9 @@ class QTEGUI:
         self.start_after_id = self.root.after(2000, self._start_engine_after_focus_delay)
 
     def _start_engine_after_focus_delay(self):
-        if self.engine.region is None or self.engine.running:
+        if self.engine.running:
+            return
+        if self.engine.region is None and self.engine.ai_capture_mode != "center":
             return
 
         self.start_after_id = None
@@ -1044,7 +1003,9 @@ class QTEGUI:
         self.status_label.config(text="运行中 | F4暂停 点击停止结束", fg=self.SUCCESS)
 
         self._log("=" * 45)
-        self._log("引擎启动 (全自动速度检测)")
+        self._log(f"引擎启动 (AI 模型)")
+        self._log(f"AI模型: {self.engine.ai_model_path}")
+        self._log(f"截取模式: {self.engine.ai_capture_mode}")
         self._log(f"区域: {self.engine.region}")
         self._log(f"检测频率: {self.engine.target_hz}Hz")
         self._log("若触发次数增加但游戏无反应，请用管理员身份运行本程序")
@@ -1107,12 +1068,11 @@ class QTEGUI:
                 actual_hz = 1000.0 / avg_lat
                 self.fps_label.config(text=f"检测: {actual_hz:.0f} Hz")
 
-        # Update auto-detect status
-        speed = self.engine.measured_speed
-        mode_label = self.engine.detected_mode_label
-        self.mode_indicator.config(text=mode_label)
-        self.speed_indicator.config(text=f"{speed:.0f}°/s")
-        self.speed_label_bar.config(text=f"速度: {mode_label} {speed:.0f}°/s")
+        stats = self.engine.get_stats()
+        ai_pred = stats.get("ai_prediction", "---")
+        self.mode_indicator.config(text=ai_pred)
+        self.speed_indicator.config(text="---")
+        self.speed_label_bar.config(text=f"AI: {ai_pred}")
 
         self.preview_after_id = self.root.after(33, self._update_preview)
 
@@ -1145,27 +1105,22 @@ class QTEGUI:
 
     def _save_config(self):
         config = {
-            "version": "2.3",
+            "version": "3.0",
             "region": self.engine.region,
             "params": {attr: var.get() for attr, var in self.param_vars.items()},
-            "red_params": {attr: var.get() for attr, var in self.red_param_vars.items()},
-            "delay_degree": self.delay_degree_var.get(),
             "capture": {
                 "backend": self.capture_backend_var.get(),
                 "obs_camera_index": self.obs_index_var.get(),
-            },
-            "obs_enhance": {
-                "enabled": self.engine.obs_enhance_enabled,
-                "brightness": self.engine.obs_brightness,
-                "contrast": self.engine.obs_contrast,
             },
             "input": {
                 "method": self.input_method_var.get(),
                 "pico_usb_port": getattr(self, 'pico_selected_port', None),
             },
-            "mask": {
-                "outer_percent": self.outer_mask_var.get(),
-                "center_percent": self.center_mask_var.get(),
+            "ai": {
+                "model": self.ai_model_var.get(),
+                "ante_ms": self.ai_ante_var.get(),
+                "confidence": self.ai_confidence_var.get(),
+                "capture_mode": self.ai_capture_var.get(),
             },
         }
         try:
@@ -1184,8 +1139,8 @@ class QTEGUI:
                 config = json.load(f)
 
             version = config.get("version", "1.0")
-            if version != "2.3":
-                self._log(f"配置版本 {version} 与当前版本 2.3 不完全兼容，尝试渐进加载")
+            if version != "3.0":
+                self._log(f"配置版本 {version} 与当前版本 3.0 不完全兼容，尝试渐进加载")
 
             if config.get("region"):
                 r = config["region"]
@@ -1200,16 +1155,6 @@ class QTEGUI:
                     self.param_vars[attr].set(val)
                     self._update_param(attr, str(val))
 
-            for attr, val in config.get("red_params", {}).items():
-                if attr in self.red_param_vars:
-                    self.red_param_vars[attr].set(val)
-                    self._update_red_param(attr, str(val))
-
-            if "delay_degree" in config:
-                self.delay_degree_var.set(config["delay_degree"])
-                self.engine.delay_degree = config["delay_degree"]
-                self.delay_display.config(text=f"{config['delay_degree']}°")
-
             capture = config.get("capture", {})
             backend = capture.get("backend", "mss")
             if backend not in ("mss", "obs"):
@@ -1221,7 +1166,6 @@ class QTEGUI:
             self.engine.obs_camera_index = obs_camera_index
             self.obs_index_display.config(text=str(obs_camera_index))
 
-            # 更新采集方式状态显示
             if backend == "mss":
                 self.capture_status_label.config(text="当前: MSS 直接截屏", fg=self.SUCCESS)
             else:
@@ -1230,24 +1174,6 @@ class QTEGUI:
                     fg=self.WARNING
                 )
 
-            mask = config.get("mask", {})
-            outer_percent = int(mask.get("outer_percent", self.outer_mask_var.get()))
-            center_percent = int(mask.get("center_percent", self.center_mask_var.get()))
-            self.outer_mask_var.set(outer_percent)
-            self.center_mask_var.set(center_percent)
-            self.engine.set_mask_settings(outer_percent=outer_percent, center_percent=center_percent)
-            self.outer_mask_display.config(text=f"{outer_percent}%")
-            self.center_mask_display.config(text=f"{center_percent}%")
-
-            # 加载OBS图像增强配置
-            obs_enhance = config.get("obs_enhance", {})
-            self.engine.obs_enhance_enabled = obs_enhance.get("enabled", True)
-            self.engine.obs_brightness = obs_enhance.get("brightness", 15)
-            self.engine.obs_contrast = obs_enhance.get("contrast", 1.2)
-            if obs_enhance:
-                self._log(f"OBS增强: 亮度+{self.engine.obs_brightness}, 对比度×{self.engine.obs_contrast}")
-
-            # 加载输入方式配置
             input_config = config.get("input", {})
             input_method = input_config.get("method", "pydirectinput")
             pico_port = input_config.get("pico_usb_port")
@@ -1262,24 +1188,30 @@ class QTEGUI:
                     self.pico_address_var.set(pico_port)
                     self._log(f"已加载 Pico 端口: {pico_port}")
 
+            ai_config = config.get("ai", config.get("detection", {}))
+            self.ai_model_var.set(ai_config.get("model", ai_config.get("ai_model", "未选择")))
+            self.ai_ante_var.set(ai_config.get("ante_ms", ai_config.get("ai_ante_ms", 20)))
+            self.ai_confidence_var.set(ai_config.get("confidence", 0))
+            self.ai_capture_var.set(ai_config.get("capture_mode", ai_config.get("ai_capture_mode", "region")))
+            self._update_ai_ante(self.ai_ante_var.get())
+            self._update_ai_confidence(self.ai_confidence_var.get())
+
             self._log(f"配置已加载 (版本 {version})")
         except Exception as e:
             self._log(f"配置加载失败: {e}")
 
     def _start_global_hotkey(self):
-        """启动全局热键监听线程"""
         if sys.platform != "win32":
             return
         self.hotkey_thread = threading.Thread(target=self._global_hotkey_loop, daemon=True)
         self.hotkey_thread.start()
 
     def _global_hotkey_loop(self):
-        """独立线程中的热键消息循环"""
         user32 = ctypes.windll.user32
         kernel32 = ctypes.windll.kernel32
         self.hotkey_thread_id = kernel32.GetCurrentThreadId()
         hotkey_id = 0x5154
-        vk_f4 = 0x73  # F4的虚拟键码
+        vk_f4 = 0x73
 
         if not user32.RegisterHotKey(None, hotkey_id, 0, vk_f4):
             self.root.after(0, lambda: self._log("全局热键 F4 注册失败（可能被其他程序占用）"))
@@ -1293,24 +1225,21 @@ class QTEGUI:
                 result = user32.GetMessageW(ctypes.byref(msg), None, 0, 0)
                 if result == 0 or result == -1:
                     break
-                if msg.message == 0x0312 and msg.wParam == hotkey_id:  # WM_HOTKEY
+                if msg.message == 0x0312 and msg.wParam == hotkey_id:
                     self.root.after(0, self._on_f4_pressed)
         finally:
             user32.UnregisterHotKey(None, hotkey_id)
 
     def _stop_global_hotkey(self):
-        """停止全局热键监听"""
         if sys.platform != "win32":
             return
         self.hotkey_stop_event.set()
         if self.hotkey_thread_id:
-            # 发送WM_QUIT消息退出GetMessageW循环
             ctypes.windll.user32.PostThreadMessageW(self.hotkey_thread_id, 0x0012, 0, 0)
         if self.hotkey_thread and self.hotkey_thread.is_alive():
             self.hotkey_thread.join(timeout=0.5)
 
     def _on_f4_pressed(self):
-        """F4热键回调"""
         try:
             self._log("[调试] F4 热键检测到")
             if self.engine.running:
