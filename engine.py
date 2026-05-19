@@ -93,11 +93,13 @@ class QTEEngine:
         self.ai_model_path = "models/model.onnx"
         self.ai_hit_ante_ms = 20
         self.ai_capture_mode = "region"
+        self.ai_confidence_threshold = 0.0
         self._ai_detector = None
         self._ai_last_pred = 0
         self._ai_last_desc = ""
         self._ai_last_probs = {}
         self._ai_last_hit = False
+        self._ai_last_confidence = 0.0
 
     def set_region(self, left: int, top: int, width: int, height: int):
         self.region = {
@@ -244,7 +246,9 @@ class QTEEngine:
                     time.sleep(0.01)
                     continue
 
-                should_hit, pred, desc_cn, probs_dict, is_ante = self._ai_detector.predict(frame)
+                should_hit, pred, desc_cn, probs_dict, is_ante, confidence = self._ai_detector.predict(
+                    frame, self.ai_confidence_threshold
+                )
 
                 now = time.perf_counter()
                 triggered = False
@@ -265,6 +269,7 @@ class QTEEngine:
                     self._ai_last_desc = desc_cn
                     self._ai_last_probs = dict(probs_dict)
                     self._ai_last_hit = should_hit
+                    self._ai_last_confidence = confidence
 
                 if enable_preview and (t0 - last_preview_time) >= self.PREVIEW_INTERVAL:
                     preview = self._draw_preview(frame, pred, desc_cn, probs_dict, should_hit, triggered)
@@ -345,6 +350,7 @@ class QTEEngine:
             frame_count = self._frame_count
             ai_last_desc = self._ai_last_desc
             ai_last_probs = dict(self._ai_last_probs)
+            ai_last_confidence = self._ai_last_confidence
 
         hit_rate = (hit_count / hit_total * 100) if hit_total > 0 else 0.0
 
@@ -356,6 +362,7 @@ class QTEEngine:
             "frame_count": frame_count,
             "hit_rate": f"{hit_rate:.1f}%",
             "ai_prediction": ai_last_desc,
+            "ai_confidence": f"{ai_last_confidence:.1%}",
             "ai_provider": self._ai_detector.check_provider() if self._ai_detector else "---",
         }
 

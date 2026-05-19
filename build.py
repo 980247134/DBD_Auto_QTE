@@ -39,16 +39,19 @@ def build():
     cmd = [
         sys.executable, "-m", "PyInstaller",
         "--name", "QTE-Auto-Tool",
-        "--onefile",           # Single executable
-        "--windowed",          # No console window (GUI app)
-        "--noconfirm",         # Overwrite without prompt
-        "--clean",             # Clean PyInstaller cache
+        "--onefile",
+        "--windowed",
+        "--noconfirm",
+        "--clean",
         "--add-data", "engine.py;.",
+        "--add-data", "ai_detector.py;.",
         "--add-data", "selector.py;.",
         "--add-data", "collapsible_frame.py;.",
         "--add-data", "usb_sender.py;.",
+        "--add-data", "models;models",
         "--hidden-import", "PIL._tkinter_finder",
         "--hidden-import", "numpy.core._multiarray_umath",
+        "--hidden-import", "onnxruntime",
         "main.py"
     ]
 

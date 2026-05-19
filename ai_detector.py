@@ -87,17 +87,18 @@ class AIDetector:
         exp_x = np.exp(x - np.max(x))
         return exp_x / np.sum(exp_x)
 
-    def predict(self, frame_rgb_224: np.ndarray) -> tuple:
+    def predict(self, frame_rgb_224: np.ndarray, confidence_threshold: float = 0.0) -> tuple:
         self._preprocess(frame_rgb_224)
         output = self.ort_session.run(None, {self.input_name: self._input_buffer})
         logits = np.squeeze(output)
         pred = int(np.argmax(logits))
         probs = self._softmax(logits)
+        confidence = float(probs[pred])
         probs_dict = {self.PRED_DICT[i]["desc_cn"]: float(probs[i]) for i in range(len(probs))}
-        should_hit = self.PRED_DICT[pred]["hit"]
+        should_hit = self.PRED_DICT[pred]["hit"] and confidence >= confidence_threshold
         desc_cn = self.PRED_DICT[pred]["desc_cn"]
         is_ante_frontier = (pred == self.ANTE_FRONTIER_CLASS)
-        return should_hit, pred, desc_cn, probs_dict, is_ante_frontier
+        return should_hit, pred, desc_cn, probs_dict, is_ante_frontier, confidence
 
     def check_provider(self) -> str:
         if self.ort_session is None:
