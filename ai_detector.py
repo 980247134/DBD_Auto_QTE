@@ -40,7 +40,7 @@ class AIDetector:
 
     ANTE_FRONTIER_CLASS = 2
 
-    def __init__(self, model_path: str, use_gpu: bool = False, nb_cpu_threads: int = None):
+    def __init__(self, model_path: str):
         if not _onnxruntime_available:
             raise RuntimeError(
                 "onnxruntime 未安装。请运行: pip install onnxruntime"
@@ -49,24 +49,16 @@ class AIDetector:
             raise FileNotFoundError(f"模型文件不存在: {model_path}")
 
         self.model_path = model_path
-        self.use_gpu = use_gpu
-        self.nb_cpu_threads = nb_cpu_threads
         self.ort_session = None
         self.input_name = None
         self._load_model()
 
     def _load_model(self):
         sess_options = ort.SessionOptions()
-        if not self.use_gpu and self.nb_cpu_threads is not None:
-            sess_options.intra_op_num_threads = self.nb_cpu_threads
-            sess_options.inter_op_num_threads = self.nb_cpu_threads
 
-        if self.use_gpu:
-            available = ort.get_available_providers()
-            preferred = ['CUDAExecutionProvider', 'DmlExecutionProvider', 'CPUExecutionProvider']
-            providers = [p for p in preferred if p in available]
-        else:
-            providers = ["CPUExecutionProvider"]
+        available = ort.get_available_providers()
+        preferred = ['CUDAExecutionProvider', 'DmlExecutionProvider', 'CPUExecutionProvider']
+        providers = [p for p in preferred if p in available]
 
         self.ort_session = ort.InferenceSession(
             self.model_path, providers=providers, sess_options=sess_options

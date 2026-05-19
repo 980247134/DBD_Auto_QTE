@@ -382,28 +382,6 @@ class QTEGUI:
                  width=3, cursor="hand2",
                  relief=tk.FLAT, padx=3, pady=2).pack(side=tk.LEFT, padx=2)
 
-        device_row = tk.Frame(content, bg=self.BG)
-        device_row.pack(fill=tk.X, pady=3)
-
-        tk.Label(device_row, text="推理设备:",
-                bg=self.BG, fg="#aac",
-                font=("JetBrains Mono", 9),
-                width=10, anchor="w").pack(side=tk.LEFT)
-
-        self.ai_device_var = tk.StringVar(value="cpu")
-        tk.Radiobutton(device_row, text="CPU",
-                      variable=self.ai_device_var, value="cpu",
-                      bg=self.BG, fg=self.FG,
-                      selectcolor=self.BG_SECONDARY,
-                      font=("JetBrains Mono", 9),
-                      cursor="hand2").pack(side=tk.LEFT, padx=5)
-        tk.Radiobutton(device_row, text="GPU",
-                      variable=self.ai_device_var, value="gpu",
-                      bg=self.BG, fg=self.FG,
-                      selectcolor=self.BG_SECONDARY,
-                      font=("JetBrains Mono", 9),
-                      cursor="hand2").pack(side=tk.LEFT, padx=5)
-
         ante_row = tk.Frame(content, bg=self.BG)
         ante_row.pack(fill=tk.X, pady=3)
 
@@ -425,28 +403,6 @@ class QTEGUI:
                                         font=("JetBrains Mono", 9, "bold"),
                                         width=6)
         self.ai_ante_display.pack(side=tk.LEFT)
-
-        threads_row = tk.Frame(content, bg=self.BG)
-        threads_row.pack(fill=tk.X, pady=3)
-
-        tk.Label(threads_row, text="CPU线程:",
-                bg=self.BG, fg="#aac",
-                font=("JetBrains Mono", 9),
-                width=10, anchor="w").pack(side=tk.LEFT)
-
-        self.ai_threads_var = tk.IntVar(value=4)
-        tk.Scale(threads_row, from_=1, to=8,
-                orient=tk.HORIZONTAL, variable=self.ai_threads_var,
-                bg=self.BG, fg=self.FG,
-                highlightthickness=0, length=100,
-                showvalue=False,
-                command=self._update_ai_threads).pack(side=tk.LEFT, padx=5)
-
-        self.ai_threads_display = tk.Label(threads_row, text="4",
-                                           bg=self.BG_SECONDARY, fg=self.WARNING,
-                                           font=("JetBrains Mono", 9, "bold"),
-                                           width=6)
-        self.ai_threads_display.pack(side=tk.LEFT)
 
         capture_row = tk.Frame(content, bg=self.BG)
         capture_row.pack(fill=tk.X, pady=3)
@@ -482,11 +438,6 @@ class QTEGUI:
         val = int(value)
         self.engine.ai_hit_ante_ms = val
         self.ai_ante_display.config(text=f"{val}ms")
-
-    def _update_ai_threads(self, value):
-        val = int(value)
-        self.engine.ai_cpu_threads = val
-        self.ai_threads_display.config(text=str(val))
 
     def _scan_models(self):
         models = AIDetector.scan_models()
@@ -989,8 +940,6 @@ class QTEGUI:
             return
 
         self.engine.ai_model_path = model_path
-        self.engine.ai_use_gpu = (self.ai_device_var.get() == "gpu")
-        self.engine.ai_cpu_threads = self.ai_threads_var.get()
         self.engine.ai_hit_ante_ms = self.ai_ante_var.get()
         self.engine.ai_capture_mode = self.ai_capture_var.get()
 
@@ -1027,7 +976,6 @@ class QTEGUI:
         self._log("=" * 45)
         self._log(f"引擎启动 (AI 模型)")
         self._log(f"AI模型: {self.engine.ai_model_path}")
-        self._log(f"推理设备: {'GPU' if self.engine.ai_use_gpu else 'CPU'}")
         self._log(f"截取模式: {self.engine.ai_capture_mode}")
         self._log(f"区域: {self.engine.region}")
         self._log(f"检测频率: {self.engine.target_hz}Hz")
@@ -1141,9 +1089,7 @@ class QTEGUI:
             },
             "ai": {
                 "model": self.ai_model_var.get(),
-                "device": self.ai_device_var.get(),
                 "ante_ms": self.ai_ante_var.get(),
-                "threads": self.ai_threads_var.get(),
                 "capture_mode": self.ai_capture_var.get(),
             },
         }
@@ -1214,12 +1160,9 @@ class QTEGUI:
 
             ai_config = config.get("ai", config.get("detection", {}))
             self.ai_model_var.set(ai_config.get("model", ai_config.get("ai_model", "未选择")))
-            self.ai_device_var.set(ai_config.get("device", ai_config.get("ai_device", "cpu")))
             self.ai_ante_var.set(ai_config.get("ante_ms", ai_config.get("ai_ante_ms", 20)))
-            self.ai_threads_var.set(ai_config.get("threads", ai_config.get("ai_threads", 4)))
             self.ai_capture_var.set(ai_config.get("capture_mode", ai_config.get("ai_capture_mode", "region")))
             self._update_ai_ante(self.ai_ante_var.get())
-            self._update_ai_threads(self.ai_threads_var.get())
 
             self._log(f"配置已加载 (版本 {version})")
         except Exception as e:

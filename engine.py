@@ -5,7 +5,8 @@ AI-powered screen analysis and auto-trigger system.
 Design Philosophy:
 - AI model (ONNX) detection: MobileNet V3 Small, 11-class skill check classification
 - Supports all QTE types: repair-heal, full-white, full-black, wiggle, special perks
-- CPU/GPU inference selectable, ante-frontier hit delay
+- GPU-first inference (CUDA/DirectML, auto-fallback to CPU)
+- Ante-frontier hit delay
 - Thread-safe shared state with Lock protection
 - Decoupled preview generation (~30Hz) from detection loop
 """
@@ -39,7 +40,7 @@ class QTEEngine:
     into 11 categories and automatically trigger great skill checks.
 
     Features:
-    - ONNX model inference with CPU/GPU support
+    - ONNX model inference with GPU-first (CUDA/DirectML/CPU fallback)
     - 11-class skill check classification (all QTE types)
     - Ante-frontier hit delay for timing optimization
     - Flexible capture: MSS / OBS virtual camera
@@ -81,8 +82,6 @@ class QTEEngine:
         self._obs_capture = None
 
         self.ai_model_path = "models/model.onnx"
-        self.ai_use_gpu = False
-        self.ai_cpu_threads = 4
         self.ai_hit_ante_ms = 20
         self.ai_capture_mode = "region"
         self._ai_detector = None
@@ -134,11 +133,7 @@ class QTEEngine:
         from ai_detector import AIDetector, is_onnxruntime_available
         if not is_onnxruntime_available():
             raise RuntimeError("onnxruntime 未安装，请运行: pip install onnxruntime")
-        self._ai_detector = AIDetector(
-            self.ai_model_path,
-            use_gpu=self.ai_use_gpu,
-            nb_cpu_threads=self.ai_cpu_threads
-        )
+        self._ai_detector = AIDetector(self.ai_model_path)
         provider = self._ai_detector.check_provider()
         print(f"[INFO] AI 模型已加载: {self.ai_model_path}")
         print(f"[INFO] 推理设备: {provider}")
