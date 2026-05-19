@@ -1,5 +1,5 @@
 {
-  "version": "2.3",
+  "version": "3.0",
   "region": {
     "left": 880,
     "top": 460,
@@ -7,34 +7,22 @@
     "height": 160
   },
   "params": {
-    "target_hz": 120,
-    "cooldown_ms": 30,
-    "predict_ms": 0,
-    "white_v_low": 100,
-    "white_s_max": 10
+    "target_hz": 500,
+    "cooldown_ms": 30
   },
-  "red_params": {
-    "red_min_r": 160,
-    "red_min_delta": 30,
-    "red_max_avg": 220,
-    "red_saturation": 0.5
-  },
-  "delay_degree": -3,
   "capture": {
-    "backend": "obs",
-    "obs_camera_index": 1
-  },
-  "obs_enhance": {
-    "enabled": true,
-    "brightness": 15,
-    "contrast": 1.2
+    "backend": "mss",
+    "obs_camera_index": 0
   },
   "input": {
-    "method": "pico2w",
-    "pico_usb_port": "COM6"
+    "method": "pydirectinput",
+    "pico_usb_port": null
   },
-  "mask": {
-    "outer_percent": 95,
-    "center_percent": 65
+  "ai": {
+    "model": "model.onnx",
+    "device": "cpu",
+    "ante_ms": 20,
+    "confidence": 0,
+    "capture_mode": "region"
   }
 }

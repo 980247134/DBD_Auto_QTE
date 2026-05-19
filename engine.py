@@ -75,11 +75,9 @@ class QTEEngine:
         self._trigger_count = 0
         self._frame_count = 0
         self._hit_count = 0
-        self._hit_log_total = 0
         self._last_trigger_time = 0.0
 
         self._latency_mean = 0.0
-        self._latency_m2 = 0.0
         self._latency_max = 0.0
         self._latency_count = 0
         self._latency_histogram = [0] * 64
@@ -262,7 +260,6 @@ class QTEEngine:
 
                 with self._lock:
                     self._frame_count += 1
-                    self._hit_log_total += 1
                     if should_hit:
                         self._hit_count += 1
                     self._ai_last_pred = pred
@@ -283,8 +280,6 @@ class QTEEngine:
                     self._latency_count += 1
                     delta = latency_ms - self._latency_mean
                     self._latency_mean += delta / self._latency_count
-                    delta2 = latency_ms - self._latency_mean
-                    self._latency_m2 += delta * delta2
                     if latency_ms > self._latency_max:
                         self._latency_max = latency_ms
                     bucket = int(latency_ms / self._hist_bucket_ms)
@@ -345,14 +340,13 @@ class QTEEngine:
             avg_latency = self._latency_mean
             max_latency = self._latency_max
             hit_count = self._hit_count
-            hit_total = self._hit_log_total
-            trigger_count = self._trigger_count
             frame_count = self._frame_count
+            trigger_count = self._trigger_count
             ai_last_desc = self._ai_last_desc
             ai_last_probs = dict(self._ai_last_probs)
             ai_last_confidence = self._ai_last_confidence
 
-        hit_rate = (hit_count / hit_total * 100) if hit_total > 0 else 0.0
+        hit_rate = (hit_count / frame_count * 100) if frame_count > 0 else 0.0
 
         return {
             "avg_latency": f"{avg_latency:.2f}ms",
@@ -380,12 +374,10 @@ class QTEEngine:
         self.paused = False
         with self._lock:
             self._latency_mean = 0.0
-            self._latency_m2 = 0.0
             self._latency_max = 0.0
             self._latency_count = 0
             self._latency_histogram = [0] * 64
             self._hit_count = 0
-            self._hit_log_total = 0
         if self.thread and self.thread.is_alive():
             self.thread.join(timeout=2.0)
         self._unload_ai_model()
