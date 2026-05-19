@@ -23,6 +23,8 @@ class AIDetector:
 
     MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
     STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+    _SCALE = (1.0 / 255.0) / STD
+    _BIAS = -MEAN / STD
 
     PRED_DICT = {
         0: {"desc": "None", "desc_cn": "无", "hit": False},
@@ -66,11 +68,9 @@ class AIDetector:
         self.input_name = self.ort_session.get_inputs()[0].name
 
     def _preprocess(self, img_rgb: np.ndarray) -> np.ndarray:
-        img = np.asarray(img_rgb, dtype=np.float32) / 255.0
-        img = np.transpose(img, (2, 0, 1))
-        img = (img - self.MEAN[:, None, None]) / self.STD[:, None, None]
-        img = np.expand_dims(img, axis=0)
-        return np.ascontiguousarray(img)
+        img = np.transpose(img_rgb, (2, 0, 1)).astype(np.float32)
+        img = img * self._SCALE[:, None, None] + self._BIAS[:, None, None]
+        return np.ascontiguousarray(img[np.newaxis, ...])
 
     @staticmethod
     def _softmax(x: np.ndarray) -> np.ndarray:

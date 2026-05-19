@@ -162,16 +162,14 @@ class QTEEngine:
             region = {"left": left, "top": top, "width": crop_size, "height": crop_size}
             shot = sct.grab(region)
             raw = np.frombuffer(shot.raw, dtype=np.uint8).reshape((crop_size, crop_size, 4))
-            frame_bgr = raw[:, :, :3].copy()
-            return cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+            return raw[:, :, [2, 1, 0]].copy()
         else:
             if self.region is None:
                 return None
             shot = sct.grab(self.region)
             h, w = self.region["height"], self.region["width"]
             raw = np.frombuffer(shot.raw, dtype=np.uint8).reshape((h, w, 4))
-            frame_bgr = raw[:, :, :3].copy()
-            frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+            frame_rgb = raw[:, :, [2, 1, 0]].copy()
             return cv2.resize(frame_rgb, (224, 224), interpolation=cv2.INTER_LINEAR)
 
     def _capture_frame_obs(self) -> np.ndarray:
@@ -195,8 +193,7 @@ class QTEEngine:
             top = (h - crop_size) // 2
             if left < 0 or top < 0:
                 return None
-            cropped = frame[top:top + crop_size, left:left + crop_size].copy()
-            return cv2.cvtColor(cropped, cv2.COLOR_BGR2RGB)
+            return frame[top:top + crop_size, left:left + crop_size, ::-1].copy()
         else:
             if self.region is None:
                 return None
@@ -206,9 +203,8 @@ class QTEEngine:
             height = self.region["height"]
             if top + height > frame.shape[0] or left + width > frame.shape[1]:
                 return None
-            cropped = frame[top:top + height, left:left + width].copy()
-            frame_rgb = cv2.cvtColor(cropped, cv2.COLOR_BGR2RGB)
-            return cv2.resize(frame_rgb, (224, 224), interpolation=cv2.INTER_LINEAR)
+            cropped = frame[top:top + height, left:left + width, ::-1]
+            return cv2.resize(cropped, (224, 224), interpolation=cv2.INTER_LINEAR)
 
     def run_loop(self, enable_preview: bool = True):
         self.running = True
