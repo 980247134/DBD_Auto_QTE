@@ -339,6 +339,8 @@ class QTEEngine:
         }
 
     def start(self, preview: bool = True):
+        if self.running:
+            return
         if self.thread and self.thread.is_alive():
             return
         self.thread = threading.Thread(target=self.run_loop, args=(preview,),

@@ -11,6 +11,7 @@ Key Design:
 import tkinter as tk
 from tkinter import messagebox
 from PIL import Image, ImageTk
+import cv2
 import numpy as np
 import time
 import json
@@ -926,7 +927,19 @@ class QTEGUI:
         self._log("=" * 45)
         self._log("开始扫描摄像头...")
 
-        cameras = self.engine.scan_cameras(max_index=10)
+        cameras = []
+        for i in range(10):
+            backend = cv2.CAP_DSHOW if sys.platform == "win32" else 0
+            cap = cv2.VideoCapture(i, backend)
+            if cap.isOpened():
+                w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                cameras.append({"index": i, "resolution": f"{w}x{h}"})
+                cap.release()
+            else:
+                cap.release()
+                if i > 0 and len(cameras) == 0:
+                    continue
 
         if not cameras:
             self._log("未找到任何可用摄像头")
@@ -975,7 +988,6 @@ class QTEGUI:
             messagebox.showerror("错误", f"模型文件不存在: {model_path}")
             return
 
-        self.engine.detection_method = "ai"
         self.engine.ai_model_path = model_path
         self.engine.ai_use_gpu = (self.ai_device_var.get() == "gpu")
         self.engine.ai_cpu_threads = self.ai_threads_var.get()
@@ -997,7 +1009,9 @@ class QTEGUI:
         self.start_after_id = self.root.after(2000, self._start_engine_after_focus_delay)
 
     def _start_engine_after_focus_delay(self):
-        if self.engine.region is None or self.engine.running:
+        if self.engine.running:
+            return
+        if self.engine.region is None and self.engine.ai_capture_mode != "center":
             return
 
         self.start_after_id = None
@@ -1077,11 +1091,11 @@ class QTEGUI:
                 actual_hz = 1000.0 / avg_lat
                 self.fps_label.config(text=f"检测: {actual_hz:.0f} Hz")
 
-        speed = self.engine.measured_speed
-        mode_label = self.engine.detected_mode_label
-        self.mode_indicator.config(text=mode_label)
-        self.speed_indicator.config(text=f"{speed:.0f}°/s")
-        self.speed_label_bar.config(text=f"速度: {mode_label} {speed:.0f}°/s")
+        stats = self.engine.get_stats()
+        ai_pred = stats.get("ai_prediction", "---")
+        self.mode_indicator.config(text=ai_pred)
+        self.speed_indicator.config(text="---")
+        self.speed_label_bar.config(text=f"AI: {ai_pred}")
 
         self.preview_after_id = self.root.after(33, self._update_preview)
 
@@ -1120,11 +1134,6 @@ class QTEGUI:
             "capture": {
                 "backend": self.capture_backend_var.get(),
                 "obs_camera_index": self.obs_index_var.get(),
-            },
-            "obs_enhance": {
-                "enabled": self.engine.obs_enhance_enabled,
-                "brightness": self.engine.obs_brightness,
-                "contrast": self.engine.obs_contrast,
             },
             "input": {
                 "method": self.input_method_var.get(),
@@ -1188,13 +1197,6 @@ class QTEGUI:
                     text=f"当前: OBS 虚拟摄像头 (编号 {obs_camera_index})",
                     fg=self.WARNING
                 )
-
-            obs_enhance = config.get("obs_enhance", {})
-            self.engine.obs_enhance_enabled = obs_enhance.get("enabled", True)
-            self.engine.obs_brightness = obs_enhance.get("brightness", 15)
-            self.engine.obs_contrast = obs_enhance.get("contrast", 1.2)
-            if obs_enhance:
-                self._log(f"OBS增强: 亮度+{self.engine.obs_brightness}, 对比度×{self.engine.obs_contrast}")
 
             input_config = config.get("input", {})
             input_method = input_config.get("method", "pydirectinput")
