@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>画面辅助 v3.1</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#1a1a2e;--bg2:#16213e;--fg:#e0e0e0;--accent:#e94560;--cyan:#00d9ff;--gold:#ffd700;--red:#ff4757;--dark:#0f0f23;--green:#00ff88}
+body{font-family:'JetBrains Mono','Consolas',monospace;background:var(--bg);color:var(--fg);height:100vh;overflow:hidden;display:flex;flex-direction:column}
+.header{display:flex;align-items:center;padding:12px 20px;background:var(--bg);gap:15px}
+.header h1{font-size:22px;color:var(--accent)}
+.header span{font-size:11px;color:#666}
+.main{display:flex;flex:1;overflow:hidden;padding:0 20px 10px}
+.left{width:380px;min-width:380px;display:flex;flex-direction:column;gap:10px;overflow-y:auto;padding-right:15px}
+.right{flex:1;display:flex;flex-direction:column;gap:10px}
+.card{background:var(--bg);border-radius:8px;padding:12px}
+.card-title{font-size:11px;font-weight:bold;margin-bottom:8px;display:flex;align-items:center;gap:6px}
+.card-title.cyan{color:var(--cyan)}
+.card-title.gold{color:var(--gold)}
+.row{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.row label{width:70px;font-size:9px;color:#aac;flex-shrink:0}
+.row select,.row input[type=number]{background:var(--bg2);color:var(--fg);border:1px solid #333;border-radius:4px;padding:4px 8px;font-family:inherit;font-size:10px;flex:1}
+.row select:focus,.row input:focus{outline:none;border-color:var(--cyan)}
+.btn{border:none;border-radius:4px;padding:6px 14px;font-family:inherit;font-size:10px;font-weight:bold;cursor:pointer;transition:all .15s}
+.btn:hover{filter:brightness(1.2)}
+.btn-accent{background:var(--accent);color:#fff}
+.btn-green{background:#0f3460;color:var(--green)}
+.btn-gold{background:#2d5a27;color:#fff}
+.btn-red{background:var(--red);color:#fff}
+.btn-dark{background:var(--bg2);color:var(--fg)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.radio-group{display:flex;gap:8px;flex:1}
+.radio-group label{display:flex;align-items:center;gap:4px;cursor:pointer;font-size:10px;color:var(--fg);width:auto}
+.radio-group input[type=radio]{accent-color:var(--cyan)}
+.controls{display:flex;gap:8px}
+.controls .btn{flex:1;padding:10px;font-size:12px}
+.preview-box{flex:1;background:#000;border-radius:8px;display:flex;align-items:center;justify-content:center;overflow:hidden;min-height:0}
+.preview-box img{max-width:100%;max-height:100%;object-fit:contain}
+.preview-box .placeholder{color:#444;font-size:14px}
+.log-box{height:180px;background:#0a0a1a;border-radius:8px;padding:8px;overflow-y:auto;font-size:9px;line-height:1.5}
+.log-box .ts{color:#555}
+.log-box .msg{color:#0f0}
+.status-bar{display:flex;align-items:center;padding:4px 15px;background:var(--dark);font-size:10px;gap:15px}
+.status-bar .st{color:var(--cyan)}
+.status-bar .sp{color:var(--gold);margin-left:auto}
+.status-bar .hz{color:#888}
+.usb-row{display:flex;gap:4px;align-items:center;flex:1}
+.usb-row select{flex:1;background:var(--bg2);color:var(--fg);border:1px solid #333;border-radius:4px;padding:4px;font-family:inherit;font-size:9px}
+</style>
+</head>
+<body>
+<div class="header">
+<h1>画面辅助</h1>
+<span>F4 暂停/继续 | WebUI v3.1</span>
+</div>
+<div class="main">
+<div class="left">
+<div class="card">
+<div class="card-title cyan">画面源</div>
+<div class="row"><label>当前:</label><span style="color:var(--cyan);font-size:10px">MSS 截屏</span></div>
+</div>
+<div class="card">
+<div class="card-title cyan">响应方式</div>
+<div class="row"><label>响应:</label>
+<div class="radio-group">
+<label><input type="radio" name="inputMethod" value="pydirectinput" checked onchange="setInputMethod('pydirectinput')">软件</label>
+<label><input type="radio" name="inputMethod" value="pico2w" onchange="setInputMethod('pico2w')">硬件(USB)</label>
+</div>
+</div>
+<div class="row"><label>端口:</label>
+<div class="usb-row">
+<select id="usbPort"><option>未连接</option></select>
+<button class="btn btn-accent" onclick="scanUSB()">扫描</button>
+<button class="btn btn-green" id="btnConnect" onclick="connectUSB()">连接</button>
+</div>
+</div>
+</div>
+<div class="card">
+<div class="card-title gold">参数配置</div>
+<div class="row"><label>配置文件:</label>
+<select id="modelSelect"><option>未选择</option></select>
+<button class="btn btn-accent" onclick="loadModels()">扫描</button>
+</div>
+<div class="row"><label>滞后:</label>
+<input type="range" id="delayMs" min="0" max="50" step="5" value="0" oninput="document.getElementById('delayVal').textContent=this.value+'ms'">
+<span id="delayVal" style="color:var(--gold);font-size:10px;width:40px">0ms</span>
+</div>
+<div class="row"><label>灵敏度</label>
+<input type="range" id="confidence" min="0" max="100" step="5" value="60" oninput="document.getElementById('confVal').textContent=this.value+'%'">
+<span id="confVal" style="color:var(--gold);font-size:10px;width:40px">60%</span>
+</div>
+<div class="row"><label>并行数</label>
+<div class="radio-group">
+<label><input type="radio" name="threads" value="2">2</label>
+<label><input type="radio" name="threads" value="4" checked>4</label>
+<label><input type="radio" name="threads" value="6">6</label>
+<label><input type="radio" name="threads" value="8">8</label>
+</div>
+</div>
+<div class="row"><label>频率Hz:</label>
+<input type="number" id="targetHz" value="120" min="10" max="500" style="width:70px">
+</div>
+<div class="row"><label>冷却ms:</label>
+<input type="number" id="cooldownMs" value="20" min="0" max="1000" style="width:70px">
+</div>
+</div>
+<div class="controls">
+<button class="btn btn-green" id="btnStart" onclick="startEngine()">启动</button>
+<button class="btn btn-dark" id="btnPause" onclick="pauseEngine()" disabled>暂停</button>
+<button class="btn btn-red" id="btnStop" onclick="stopEngine()" disabled>停止</button>
+</div>
+<button class="btn btn-gold" style="width:100%;padding:8px" onclick="saveConfig()">保存配置</button>
+<div class="card" style="flex:1;min-height:0;display:flex;flex-direction:column">
+<div class="card-title" style="color:var(--fg)">日志</div>
+<div class="log-box" id="logBox"></div>
+</div>
+</div>
+<div class="right">
+<div class="preview-box" id="previewBox">
+<span class="placeholder">等待启动...</span>
+</div>
+</div>
+</div>
+<div class="status-bar">
+<span class="st" id="statusText">就绪 | 点击启动</span>
+<span class="hz" id="hzText">速率: -- Hz</span>
+<span class="sp" id="predText">状态: ---</span>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
+<script>
+const socket = io();
+const $ = id => document.getElementById(id);
+let usbConnected = false;
+let usbPortVal = null;
+
+socket.on("preview", data => {
+    const box = $("previewBox");
+    if (!data.data) return;
+    let img = box.querySelector("img");
+    if (!img) { box.innerHTML = ""; img = document.createElement("img"); box.appendChild(img); }
+    img.src = "data:image/jpeg;base64," + data.data;
+});
+
+socket.on("stats", data => {
+    const running = data.running || false;
+    const paused = data.paused || false;
+    $("btnStart").disabled = running;
+    $("btnPause").disabled = !running;
+    $("btnStop").disabled = !running;
+    if (running) {
+        $("btnStart").textContent = "运行中";
+        $("btnStart").style.color = paused ? "var(--gold)" : "var(--cyan)";
+        $("btnPause").textContent = paused ? "继续" : "暂停";
+        $("statusText").textContent = paused ? "已暂停" : "运行中 | F4暂停";
+        $("statusText").style.color = paused ? "var(--gold)" : "var(--cyan)";
+    } else {
+        $("btnStart").textContent = "启动";
+        $("btnStart").style.color = "var(--green)";
+        $("btnPause").textContent = "暂停";
+        $("statusText").textContent = "就绪 | 点击启动";
+        $("statusText").style.color = "var(--cyan)";
+    }
+    if (data.avg_latency) {
+        const avg = parseFloat(data.avg_latency);
+        if (avg > 0) $("hzText").textContent = "速率: " + (1000 / avg).toFixed(0) + " Hz";
+    }
+    if (data.ai_prediction) $("predText").textContent = "状态: " + data.ai_prediction;
+});
+
+socket.on("log", data => {
+    const box = $("logBox");
+    const line = document.createElement("div");
+    line.innerHTML = '<span class="ts">[' + data.ts + ']</span> <span class="msg">' + data.msg + '</span>';
+    box.appendChild(line);
+    if (box.children.length > 500) box.removeChild(box.firstChild);
+    box.scrollTop = box.scrollHeight;
+});
+
+async function api(path, method, body) {
+    const opts = {method, headers: {"Content-Type": "application/json"}};
+    if (body) opts.body = JSON.stringify(body);
+    const res = await fetch(path, opts);
+    return res.json();
+}
+
+async function loadModels() {
+    const r = await api("/api/models", "GET");
+    const sel = $("modelSelect"); sel.innerHTML = "";
+    if (r.length) { r.forEach(m => { const o = document.createElement("option"); o.value = m.name; o.textContent = m.name; sel.appendChild(o); }); }
+    else { const o = document.createElement("option"); o.textContent = "未找到"; sel.appendChild(o); }
+}
+
+async function startEngine() {
+    const model = $("modelSelect").value;
+    if (!model || model === "未找到") { alert("请先选择配置文件"); return; }
+    const delay = parseInt($("delayMs").value) || 0;
+    const conf = parseInt($("confidence").value) || 60;
+    const threads = parseInt(document.querySelector('input[name="threads"]:checked').value) || 4;
+    const hz = parseInt($("targetHz").value) || 120;
+    const cd = parseInt($("cooldownMs").value) || 20;
+    const r = await api("/api/start", "POST", { model, delay_ms: delay, confidence: conf, threads, target_hz: hz, cooldown_ms: cd });
+    if (!r.ok) alert(r.error || "启动失败");
+}
+
+async function stopEngine() { await api("/api/stop", "POST"); }
+async function pauseEngine() { await api("/api/pause", "POST"); }
+
+async function saveConfig() {
+    const model = $("modelSelect").value;
+    const cfg = {
+        version: "3.1",
+        params: { target_hz: parseInt($("targetHz").value) || 120, cooldown_ms: parseInt($("cooldownMs").value) || 20 },
+        input: { method: document.querySelector('input[name="inputMethod"]:checked').value, pico_usb_port: usbPortVal },
+        ai: { model: model, delay_ms: parseInt($("delayMs").value) || 0, confidence: parseInt($("confidence").value) || 60, threads: parseInt(document.querySelector('input[name="threads"]:checked').value) || 4 }
+    };
+    const r = await api("/api/config", "POST", cfg);
+    if (r.ok) alert("配置已保存"); else alert("保存失败: " + (r.error || ""));
+}
+
+async function setInputMethod(m) { await api("/api/input_method", "POST", {method: m}); }
+
+async function scanUSB() {
+    const r = await api("/api/scan_usb", "POST");
+    const sel = $("usbPort"); sel.innerHTML = "";
+    if (r.ok && r.devices && r.devices.length) { r.devices.forEach(d => { const o = document.createElement("option"); o.value = d.port; o.textContent = d.port + " - " + d.description; sel.appendChild(o); }); }
+    else { const o = document.createElement("option"); o.textContent = "未找到设备"; sel.appendChild(o); }
+}
+
+async function connectUSB() {
+    if (usbConnected) { await api("/api/disconnect_usb", "POST"); usbConnected = false; usbPortVal = null; $("btnConnect").textContent = "连接"; $("btnConnect").className = "btn btn-green"; return; }
+    const port = $("usbPort").value;
+    if (!port || port === "未找到设备") { alert("请先扫描设备"); return; }
+    const r = await api("/api/connect_usb", "POST", {port});
+    if (r.ok) { usbConnected = true; usbPortVal = port; $("btnConnect").textContent = "断开"; $("btnConnect").className = "btn btn-red"; }
+    else { alert("连接失败: " + (r.error || "")); }
+}
+
+async function loadConfig() {
+    const r = await api("/api/config", "GET");
+    if (!r.ok || !r.config) return;
+    const c = r.config;
+    if (c.params) { if (c.params.target_hz) $("targetHz").value = c.params.target_hz; if (c.params.cooldown_ms) $("cooldownMs").value = c.params.cooldown_ms; }
+    if (c.input) { const m = c.input.method || "pydirectinput"; const rb = document.querySelector('input[name="inputMethod"][value="' + m + '"]'); if (rb) rb.checked = true; if (c.input.pico_usb_port) usbPortVal = c.input.pico_usb_port; }
+    if (c.ai) { if (c.ai.model) { await loadModels(); $("modelSelect").value = c.ai.model; } if (c.ai.delay_ms !== undefined) { $("delayMs").value = c.ai.delay_ms; $("delayVal").textContent = c.ai.delay_ms + "ms"; } if (c.ai.confidence !== undefined) { $("confidence").value = c.ai.confidence; $("confVal").textContent = c.ai.confidence + "%"; } if (c.ai.threads) { const tb = document.querySelector('input[name="threads"][value="' + c.ai.threads + '"]'); if (tb) tb.checked = true; } }
+}
+
+loadModels();
+loadConfig();
+</script>
+</body>
+</html>

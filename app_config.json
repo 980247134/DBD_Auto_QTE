@@ -1,0 +1,17 @@
+{
+  "version": "3.1",
+  "params": {
+    "target_hz": 120,
+    "cooldown_ms": 20
+  },
+  "input": {
+    "method": "pydirectinput",
+    "pico_usb_port": null
+  },
+  "ai": {
+    "model": "model_cpu_v4-1.onnx",
+    "delay_ms": 5,
+    "confidence": 60,
+    "threads": 4
+  }
+}
